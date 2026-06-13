@@ -1,5 +1,6 @@
 """MCP Tool: query_knowledge_hub - hybrid search over HCS knowledge base."""
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from mcp import types
@@ -7,8 +8,16 @@ from mcp import types
 from services.knowledge_service import KnowledgeService
 from config.model_provider import create_chat_model
 from langchain_core.messages import HumanMessage
+from mcp_server.errors import format_error
 
 logger = logging.getLogger(__name__)
+
+PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
+
+
+def _load_prompt_template(name: str) -> str:
+    return (PROMPTS_DIR / name).read_text(encoding="utf-8")
+
 
 TOOL_NAME = "query_knowledge_hub"
 TOOL_DESCRIPTION = "Search the HCS knowledge base for relevant documents using hybrid search (dense + BM25 + RRF)."
@@ -33,6 +42,7 @@ TOOL_INPUT_SCHEMA: Dict[str, Any] = {
     },
     "required": ["query"],
 }
+PROMPT_FILE = "rag_answer_v1.txt"
 
 
 async def query_knowledge_hub_handler(
@@ -62,15 +72,7 @@ async def query_knowledge_hub_handler(
         answer = ""
         try:
             llm = create_chat_model(temperature=0)
-            prompt = f"""你是 HCS 测试辅助助手。请根据以下检索结果回答用户问题。如果资料不足请说明。
-
-## 检索结果
-{context}
-
-## 用户问题
-{query}
-
-## 答案（中文，简洁）："""
+            prompt = _load_prompt_template(PROMPT_FILE).format(context=context, query=query)
             full = ""
             async for chunk in llm.astream([HumanMessage(content=prompt)]):
                 full += chunk.content
@@ -92,9 +94,9 @@ async def query_knowledge_hub_handler(
             isError=False,
         )
     except Exception as e:
-        logger.exception("query_knowledge_hub failed")
+        err = format_error(e, context="query_knowledge_hub")
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text=f"Error: {e}")],
+            content=[types.TextContent(type="text", text=err.to_text())],
             isError=True,
         )
 
