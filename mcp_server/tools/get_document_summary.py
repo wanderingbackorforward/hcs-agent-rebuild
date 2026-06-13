@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from mcp import types
 
 from services.knowledge_service import KnowledgeService
+from mcp_server.errors import MCPError, format_error
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,10 @@ async def get_document_summary_handler(
             doc = service.db.knowledge.get_by_doc_id(doc_id)
             content = doc.content if doc else None
         if not content:
-            return types.CallToolResult(
-                content=[types.TextContent(type="text", text=f"Document '{doc_id}' not found.")],
-                isError=True,
+            raise MCPError(
+                error_type="not_found",
+                message=f"Document '{doc_id}' not found.",
+                details={"doc_id": doc_id, "collection": collection},
             )
         summary = content[:500] + "..." if len(content) > 500 else content
         lines = [
@@ -57,9 +59,9 @@ async def get_document_summary_handler(
             isError=False,
         )
     except Exception as e:
-        logger.exception("get_document_summary failed")
+        err = format_error(e, context="get_document_summary")
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text=f"Error: {e}")],
+            content=[types.TextContent(type="text", text=err.to_text())],
             isError=True,
         )
 

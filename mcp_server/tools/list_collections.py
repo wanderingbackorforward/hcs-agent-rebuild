@@ -5,6 +5,7 @@ from typing import Any, Dict
 from mcp import types
 
 from services.knowledge_service import KnowledgeService
+from mcp_server.errors import format_error
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,9 @@ async def list_collections_handler(include_stats: bool = True) -> types.CallTool
             isError=False,
         )
     except Exception as e:
-        logger.exception("list_collections failed")
+        err = format_error(e, context="list_collections")
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text=f"Error: {e}")],
+            content=[types.TextContent(type="text", text=err.to_text())],
             isError=True,
         )
 
