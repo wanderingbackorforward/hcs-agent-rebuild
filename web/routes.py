@@ -1,12 +1,14 @@
 """Web routes for HCS Agent Platform."""
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from api.chat_handler import process_user_input_stream
+from api.rate_limit import rate_limit
 
 router = APIRouter(tags=["Web界面"])
 templates = Jinja2Templates(directory="web/templates")
@@ -23,7 +25,11 @@ async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@router.post("/chat/stream", summary="流式聊天")
+@router.post(
+    "/chat/stream",
+    summary="流式聊天",
+    dependencies=[Depends(require_api_key), Depends(rate_limit)],
+)
 async def chat_stream_endpoint(chat: ChatRequest):
     """Handle streaming chat requests."""
     sid = chat.session_id or str(uuid.uuid4())
@@ -35,7 +41,11 @@ async def chat_stream_endpoint(chat: ChatRequest):
     return StreamingResponse(token_generator(), media_type="text/plain")
 
 
-@router.post("/chat", summary="普通聊天接口")
+@router.post(
+    "/chat",
+    summary="普通聊天接口",
+    dependencies=[Depends(require_api_key), Depends(rate_limit)],
+)
 async def chat_endpoint(chat: ChatRequest):
     """Non-streaming chat endpoint."""
     sid = chat.session_id or str(uuid.uuid4())
