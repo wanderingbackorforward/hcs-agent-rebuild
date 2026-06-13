@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Runtime Data
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.faiss
+*.index
+*.pkl
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Chroma
+.chroma/
