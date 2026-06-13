@@ -1,10 +1,17 @@
 """Document ingestion pipeline."""
+import hashlib
+import logging
 import os
-import uuid
 from typing import List
 from rag.ingestion.chunking.chunker import TextChunker
 from rag.ingestion.embedding.embedder import Embedder
 from rag.ingestion.storage.chroma_store import ChromaStore
+
+logger = logging.getLogger(__name__)
+
+
+def _content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
 class IngestionPipeline:
@@ -16,27 +23,36 @@ class IngestionPipeline:
 
     def ingest_text(self, content: str, doc_id: str = None, category: str = "spec",
                     title: str = None, source: str = None) -> str:
-        doc_id = doc_id or uuid.uuid4().hex[:12]
+        # Idempotency: same content always produces same doc_id; skip if already in store.
+        effective_id = doc_id or _content_hash(content)
+        if effective_id in self.store.list_documents():
+            logger.info(f"ingest_text: skip duplicate doc_id={effective_id}")
+            return effective_id
         chunks = self.chunker.split(content)
         embeddings = self.embedder.embed_batch(chunks)
         metadatas = [
             {
                 "category": category,
-                "title": title or doc_id,
+                "title": title or effective_id,
                 "source": source or "inline",
                 "chunk_index": i,
             }
             for i in range(len(chunks))
         ]
-        self.store.upsert(doc_id, chunks, embeddings, metadatas)
-        return doc_id
+        self.store.upsert(effective_id, chunks, embeddings, metadatas)
+        return effective_id
 
     def ingest_file(self, file_path: str, doc_id: str = None,
                     category: str = "spec", title: str = None) -> str:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
-        doc_id = doc_id or os.path.basename(file_path)
-        return self.ingest_text(content, doc_id, category, title or doc_id, source=file_path)
+        return self.ingest_text(
+            content,
+            doc_id or _content_hash(content),
+            category,
+            title or os.path.basename(file_path),
+            source=file_path,
+        )
 
     def seed_defaults(self):
         defaults = [
@@ -72,13 +88,12 @@ class IngestionPipeline:
                 ),
             },
         ]
-        existing = set(self.store.list_documents())
         for d in defaults:
-            if d["doc_id"] not in existing:
-                self.ingest_text(
-                    content=d["content"],
-                    doc_id=d["doc_id"],
-                    category=d["category"],
-                    title=d["title"],
-                    source="seed",
-                )
+            # seed_defaults is itself idempotent: ingest_text short-circuits on duplicate.
+            self.ingest_text(
+                content=d["content"],
+                doc_id=d["doc_id"],
+                category=d["category"],
+                title=d["title"],
+                source="seed",
+            )
