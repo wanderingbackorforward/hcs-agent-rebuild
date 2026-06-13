@@ -1,16 +1,19 @@
-"""Hybrid search: dense + sparse + RRF fusion."""
+"""Hybrid search: dense + sparse + RRF fusion + optional rerank."""
 from typing import List, Tuple, Dict
 from rag.query_engine.dense_retriever import DenseRetriever
 from rag.query_engine.sparse_retriever import SparseRetriever
+from config.reranker_factory import create_reranker, Reranker
 
 
 class HybridSearch:
     def __init__(self, dense: DenseRetriever = None, sparse: SparseRetriever = None,
-                 dense_weight: float = 1.0, sparse_weight: float = 1.0):
+                 dense_weight: float = 1.0, sparse_weight: float = 1.0,
+                 reranker: Reranker = None):
         self.dense = dense or DenseRetriever()
         self.sparse = sparse or SparseRetriever(self.dense.store)
         self.dense_weight = dense_weight
         self.sparse_weight = sparse_weight
+        self.reranker = reranker if reranker is not None else create_reranker()
 
     def _rrf_fuse(self, dense_results: List[Tuple], sparse_results: List[Tuple],
                   k: int = 60) -> List[Tuple[str, str, float, Dict]]:
@@ -44,4 +47,5 @@ class HybridSearch:
         dense_results = self.dense.retrieve(query, top_k=top_k, filters=filters)
         sparse_results = self.sparse.retrieve(query, top_k=top_k, filters=filters)
         fused = self._rrf_fuse(dense_results, sparse_results)
-        return fused[:top_k]
+        reranked = self.reranker.rerank(query, fused, top_k=top_k)
+        return reranked

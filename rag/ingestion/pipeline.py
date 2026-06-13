@@ -6,6 +6,8 @@ from typing import List
 from rag.ingestion.chunking.chunker import TextChunker
 from rag.ingestion.embedding.embedder import Embedder
 from rag.ingestion.storage.chroma_store import ChromaStore
+from config.chunker_factory import create_chunker
+from config.vector_store_factory import create_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +19,8 @@ def _content_hash(content: str) -> str:
 class IngestionPipeline:
     def __init__(self, store: ChromaStore = None, chunker: TextChunker = None,
                  embedder: Embedder = None):
-        self.store = store or ChromaStore()
-        self.chunker = chunker or TextChunker()
+        self.store = store or create_vector_store()
+        self.chunker = chunker or create_chunker()
         self.embedder = embedder or Embedder()
 
     def ingest_text(self, content: str, doc_id: str = None, category: str = "spec",
