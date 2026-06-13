@@ -11,7 +11,7 @@ import time
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,8 @@ class SlidingWindowLimiter:
 _limiter = SlidingWindowLimiter()
 
 
-def rate_limit(api_key: str) -> None:
-    """FastAPI dependency wrapper."""
+async def rate_limit(request: Request) -> None:
+    """FastAPI dependency. Reads the api_key that require_api_key stored on
+    request.state; falls back to "anonymous" in dev mode."""
+    api_key = getattr(request.state, "api_key", None) or "anonymous"
     _limiter.check(api_key)

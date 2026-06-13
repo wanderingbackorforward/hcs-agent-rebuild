@@ -3,12 +3,15 @@
 Reads valid keys from env var `API_KEYS` (comma-separated). If empty,
 the service is in dev mode and ALL requests are accepted (with a warning).
 Production deployments MUST set API_KEYS.
+
+Stores the resolved key on `request.state.api_key` so downstream deps
+(rate_limit) can attribute usage without re-reading the header.
 """
 import logging
 import os
 from typing import List
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, status
 
 logger = logging.getLogger(__name__)
 
@@ -31,22 +34,26 @@ if DEV_MODE:
 
 
 async def require_api_key(
+    request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> str:
     """FastAPI dependency: rejects requests without a valid X-API-Key.
 
-    Returns the key itself so downstream rate-limiter can attribute usage.
+    Stores the resolved key on request.state.api_key for downstream deps.
     """
     if DEV_MODE:
-        return "dev-mode-no-key"
-    if not x_api_key:
+        resolved = "dev-mode-no-key"
+    elif not x_api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing X-API-Key header",
         )
-    if x_api_key not in VALID_KEYS:
+    elif x_api_key not in VALID_KEYS:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
         )
-    return x_api_key
+    else:
+        resolved = x_api_key
+    request.state.api_key = resolved
+    return resolved
