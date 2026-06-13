@@ -1,25 +1,30 @@
 """Model provider factory for chat LLMs and embeddings.
 
 Supports Azure OpenAI and OpenAI-compatible providers such as Qwen,
-DeepSeek, Zhipu, and OpenAI by switching environment variables.
+DeepSeek, Zhipu, MiniMax and OpenAI by switching environment variables.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
+from typing import Any, List
+
+import requests
 from dotenv import load_dotenv
+from langchain_core.embeddings import Embeddings
 from langchain_openai import (
     AzureChatOpenAI,
     AzureOpenAIEmbeddings,
     ChatOpenAI,
     OpenAIEmbeddings,
 )
-from pydantic import SecretStr
+from pydantic import BaseModel, Field, SecretStr
 
 load_dotenv()
 
-CHAT_PROVIDERS = {"openai", "qwen", "deepseek", "zhipu", "openai-compatible"}
-EMBEDDING_PROVIDERS = {"openai", "qwen", "zhipu", "openai-compatible"}
+CHAT_PROVIDERS = {"openai", "qwen", "deepseek", "zhipu", "minimax", "openai-compatible"}
+EMBEDDING_PROVIDERS = {"openai", "qwen", "deepseek", "zhipu", "minimax", "openai-compatible"}
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -29,6 +34,53 @@ def _env(name: str, default: str | None = None) -> str | None:
 
 def get_model_provider() -> str:
     return (_env("MODEL_PROVIDER", "openai") or "openai").strip().lower()
+
+
+class MiniMaxEmbeddings(BaseModel, Embeddings):
+    """MiniMax embedding client compatible with LangChain.
+
+    Uses MiniMax's native ``/v1/embeddings`` endpoint which returns a top-level
+    ``vectors`` array rather than the OpenAI-compatible shape.
+    """
+
+    model: str = "embo-01"
+    api_key: SecretStr
+    base_url: str = "https://api.minimaxi.com/v1/embeddings"
+    timeout: int = Field(default=60, ge=1)
+
+    def _embed(self, texts: List[str], embed_type: str) -> List[List[float]]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "type": embed_type,
+            "texts": list(texts),
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key.get_secret_value()}",
+            "Content-Type": "application/json",
+        }
+        response = requests.post(
+            self.base_url, headers=headers, json=payload, timeout=self.timeout
+        )
+        response.raise_for_status()
+        data = response.json()
+        base_resp = data.get("base_resp", {})
+        if base_resp.get("status_code") != 0:
+            raise ValueError(f"MiniMax embedding error: {base_resp}")
+        return data["vectors"]
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return self._embed(texts, "db")
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._embed([text], "query")[0]
+
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.embed_documents, texts)
+
+    async def aembed_query(self, text: str) -> List[float]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.embed_query, text)
 
 
 def create_chat_model(temperature: float = 0):
@@ -53,7 +105,7 @@ def create_chat_model(temperature: float = 0):
 
     raise ValueError(
         f"Unsupported MODEL_PROVIDER={provider!r}. "
-        "Use azure, qwen, deepseek, zhipu, openai, or openai-compatible."
+        "Use azure, qwen, deepseek, zhipu, minimax, openai, or openai-compatible."
     )
 
 
@@ -68,6 +120,14 @@ def create_embedding_model():
             azure_endpoint=_env("AZURE_OPENAI_ENDPOINT_EMBEDDING"),
         )
 
+    if provider == "minimax":
+        return MiniMaxEmbeddings(
+            model=_env("EMBEDDING_MODEL", "embo-01") or "embo-01",
+            api_key=SecretStr(_env("EMBEDDING_API_KEY") or _env("LLM_API_KEY", "") or ""),
+            base_url=_env("EMBEDDING_BASE_URL", "https://api.minimaxi.com/v1/embeddings")
+            or "https://api.minimaxi.com/v1/embeddings",
+        )
+
     if provider in EMBEDDING_PROVIDERS:
         return OpenAIEmbeddings(
             model=_env("EMBEDDING_MODEL", "text-embedding-v3") or "text-embedding-v3",
@@ -78,5 +138,5 @@ def create_embedding_model():
 
     raise ValueError(
         f"Unsupported EMBEDDING_PROVIDER={provider!r}. "
-        "Use azure, qwen, zhipu, openai, or openai-compatible."
+        "Use azure, qwen, deepseek, zhipu, minimax, openai, or openai-compatible."
     )

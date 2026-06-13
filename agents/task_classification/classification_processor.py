@@ -35,12 +35,28 @@ class ClassificationProcessor:
 
     def _parse_json(self, text: str) -> dict:
         try:
-            json_match = re.search(r"\{[^{}]*\}", text)
-            if json_match:
-                return json.loads(json_match.group())
+            json_text = self._extract_json_object(text)
+            if json_text:
+                return json.loads(json_text)
         except Exception:
             pass
         return {"intent_type": "knowledge_qa", "required_fields": {}, "missing_fields": [], "keywords": [], "topic": ""}
+
+    @staticmethod
+    def _extract_json_object(text: str) -> str | None:
+        """Extract the outermost JSON object from text, supporting nested braces."""
+        start = text.find("{")
+        if start == -1:
+            return None
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        return None
 
     def reset_conversation(self):
         self.state_manager.reset()
