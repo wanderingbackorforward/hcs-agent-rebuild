@@ -157,3 +157,11 @@ jobs:
             echo "::error::MCP server died within 4s of startup"
             exit 1
           fi
+
+      - name: Upload deploy smoke logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-smoke-log
+          path: docker-smoke.log
+          if-no-files-found: ignore
