@@ -109,21 +109,26 @@ jobs:
             -e EMBEDDING_BASE_URL \
             -e EMBEDDING_MODEL \
             hcs-agent-rebuild:smoke
-          # Wait for container to become healthy (healthcheck hits /docs).
-          for i in $(seq 1 30); do
-            sleep 2
+          # Give uvicorn a chance to boot. After 5s we'll check /docs;
+          # if it fails, dump logs (visible inline) and exit non-zero.
+          for i in $(seq 1 12); do
+            sleep 5
             if curl -fsS http://127.0.0.1:8000/docs > /dev/null 2>&1; then
-              echo "app up after ${i}x 2s"; break
+              echo "app up after ${i}x 5s"
+              BOOT_OK=1
+              break
             fi
-            if [ "$i" = "30" ]; then
-              echo "::error::app failed to come up in 60s"
-              echo "::group::docker logs (last 80 lines)"
-              docker logs hcs-smoke 2>&1 | tail -80
-              echo "::endgroup::"
-              docker stop hcs-smoke || true
-              exit 1
-            fi
+            BOOT_OK=0
           done
+          # ALWAYS dump docker logs (collapsed by default in step view)
+          echo "::group::docker logs (full)"
+          docker logs hcs-smoke 2>&1 || true
+          echo "::endgroup::"
+          if [ "${BOOT_OK:-0}" != "1" ]; then
+            echo "::error::app did not respond on /docs within 60s"
+            docker stop hcs-smoke || true
+            exit 1
+          fi
           # /docs 200 OK
           echo "--- GET /docs ---"
           curl -fsS -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:8000/docs
@@ -138,10 +143,6 @@ jobs:
           # /openapi.json 200
           echo "--- GET /openapi.json ---"
           curl -fsS -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:8000/openapi.json
-          # Always capture docker logs (grouped so they collapse in step view)
-          echo "::group::docker logs (success path)"
-          docker logs hcs-smoke 2>&1 | tail -40 || true
-          echo "::endgroup::"
           docker stop hcs-smoke || true
 
       - name: "Smoke: MCP stdio server boots"
