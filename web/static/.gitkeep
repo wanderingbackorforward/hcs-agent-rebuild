@@ -1,0 +1,5 @@
+# web/static — served at /static/
+
+Add CSS / JS / image assets here. The directory MUST exist (Starlette
+rejects StaticFiles mount with check_dir=True on missing paths) but
+can be empty in tests / MVP.

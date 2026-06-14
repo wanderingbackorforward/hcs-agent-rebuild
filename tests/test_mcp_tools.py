@@ -3,6 +3,11 @@
 Use direct in-process invocation (no MCP stdio transport) to keep tests fast.
 Each handler is exercised for: success path, input validation, and the
 format_error envelope.
+
+These tests need an embedding-capable environment to seed the knowledge
+base with real vectors. When no key is set (CI's default state), they
+skip — the hybrid_search test (test_hybrid_search.py) is the dedicated
+embedding-API integration test.
 """
 import os
 import tempfile
@@ -10,6 +15,21 @@ import pytest
 
 from db.db_router import DatabaseRouter
 from services.knowledge_service import KnowledgeService
+
+
+def _has_embedding_key() -> bool:
+    return bool(
+        os.getenv("LLM_API_KEY")
+        or os.getenv("EMBEDDING_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+    )
+
+
+# Module-level skipif: tests need real embeddings to seed the KB.
+requires_embedding = pytest.mark.skipif(
+    not _has_embedding_key(),
+    reason="no LLM/Embedding API key set; KB seeding requires it",
+)
 
 
 @pytest.fixture
@@ -24,6 +44,7 @@ def knowledge_service(monkeypatch):
     os.unlink(path)
 
 
+@requires_embedding
 def test_query_knowledge_hub_happy_path(knowledge_service):
     from mcp_server.tools import query_knowledge_hub
     import asyncio
@@ -37,6 +58,7 @@ def test_query_knowledge_hub_happy_path(knowledge_service):
     assert "References" in text or "AI Answer" in text
 
 
+@requires_embedding
 def test_query_knowledge_hub_no_results(knowledge_service):
     """Unknown term still returns a non-error result, not an exception."""
     from mcp_server.tools import query_knowledge_hub
@@ -50,6 +72,7 @@ def test_query_knowledge_hub_no_results(knowledge_service):
     assert res.isError is False
 
 
+@requires_embedding
 def test_get_document_summary_not_found(knowledge_service):
     from mcp_server.tools import get_document_summary
     import asyncio
@@ -66,6 +89,7 @@ def test_get_document_summary_not_found(knowledge_service):
     assert "sqlite" not in text.lower()  # no internal info
 
 
+@requires_embedding
 def test_get_document_summary_happy_path(knowledge_service):
     from mcp_server.tools import get_document_summary
     import asyncio
@@ -77,6 +101,7 @@ def test_get_document_summary_happy_path(knowledge_service):
     assert "HCS SDK" in text
 
 
+@requires_embedding
 def test_list_collections_returns_counts(knowledge_service):
     from mcp_server.tools import list_collections
     import asyncio
