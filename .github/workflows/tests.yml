@@ -117,7 +117,9 @@ jobs:
             fi
             if [ "$i" = "30" ]; then
               echo "::error::app failed to come up in 60s"
-              docker logs hcs-smoke 2>&1 | tee docker-smoke.log
+              echo "::group::docker logs (last 80 lines)"
+              docker logs hcs-smoke 2>&1 | tail -80
+              echo "::endgroup::"
               docker stop hcs-smoke || true
               exit 1
             fi
@@ -136,8 +138,10 @@ jobs:
           # /openapi.json 200
           echo "--- GET /openapi.json ---"
           curl -fsS -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:8000/openapi.json
-          # Always capture docker logs as artifact (success or failure path)
-          docker logs hcs-smoke 2>&1 > docker-smoke.log || true
+          # Always capture docker logs (grouped so they collapse in step view)
+          echo "::group::docker logs (success path)"
+          docker logs hcs-smoke 2>&1 | tail -40 || true
+          echo "::endgroup::"
           docker stop hcs-smoke || true
 
       - name: "Smoke: MCP stdio server boots"
