@@ -137,7 +137,7 @@ jobs:
           curl -fsS -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:8000/openapi.json
           docker stop hcs-smoke
 
-      - name: Smoke: MCP stdio server boots
+      - name: "Smoke: MCP stdio server boots"
         # The MCP server's only public surface is stdio JSON-RPC. Easiest
         # smoke: run it for ~5s and verify it hasn't crashed, then kill.
         env:
