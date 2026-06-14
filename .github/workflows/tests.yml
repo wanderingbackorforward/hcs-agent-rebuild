@@ -90,7 +90,7 @@ jobs:
         run: |
           docker build -t hcs-agent-rebuild:smoke .
 
-      - name: Smoke: FastAPI app boots + /docs + /chat respond
+      - name: "Smoke: FastAPI app boots + /docs + /chat respond"
         env:
           # Dev mode: no key required, just need LLM key for chat completion
           API_KEYS: ""
