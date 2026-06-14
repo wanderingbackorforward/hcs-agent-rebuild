@@ -15,7 +15,7 @@
 - **文件**：`D:/mine/myprojects/smart-appointment-ai-agent/简历版本/智谱Agent全栈/简历-智谱-Agent全栈开发实习生.md`
 - **邮件正文**：`D:/mine/myprojects/smart-appointment-ai-agent/简历版本/智谱Agent全栈/求职邮件-智谱-Agent全栈开发实习生.md`
 - **定位**：突出 AI Coding / VibeCoding、Agent memory/skill/MCP/自进化、Multi-Agent 协作、Rapid Prototyping。
-- **GitHub 已加入**：https://github.com/wanderingbackorward
+- **GitHub 已加入**：https://github.com/wanderingbackorforward
 - **项目链接已加入**：https://github.com/wanderingbackorforward/hcs-agent-rebuild
 
 ---
