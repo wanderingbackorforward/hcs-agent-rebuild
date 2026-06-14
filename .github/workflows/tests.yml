@@ -10,10 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
-      # Start with 3.12 only (project dev version). Re-enable 3.10/3.11 once
-      # their failures are triaged and fixed.
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
