@@ -117,7 +117,8 @@ jobs:
             fi
             if [ "$i" = "30" ]; then
               echo "::error::app failed to come up in 60s"
-              docker logs hcs-smoke
+              docker logs hcs-smoke 2>&1 | tee docker-smoke.log
+              docker stop hcs-smoke || true
               exit 1
             fi
           done
@@ -135,7 +136,9 @@ jobs:
           # /openapi.json 200
           echo "--- GET /openapi.json ---"
           curl -fsS -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:8000/openapi.json
-          docker stop hcs-smoke
+          # Always capture docker logs as artifact (success or failure path)
+          docker logs hcs-smoke 2>&1 > docker-smoke.log || true
+          docker stop hcs-smoke || true
 
       - name: "Smoke: MCP stdio server boots"
         # The MCP server's only public surface is stdio JSON-RPC. Easiest
