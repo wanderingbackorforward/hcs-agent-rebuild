@@ -42,13 +42,20 @@ jobs:
             --ignore=tests/test_task_classification_agent.py \
             -v
 
-      - name: Run hybrid-search retrieval test (optional, no key needed)
-        # test_hybrid_search.py only needs an embedding key to make
-        # 30+ dense queries. CI runs it as a separate, lower-priority step.
+      - name: Run hybrid-search retrieval test (optional, MiniMax)
+        # test_hybrid_search.py makes 30+ dense embedding API calls.
+        # This step runs only if EMBEDDING_API_KEY is set as a secret.
+        # Configure secrets in Settings > Secrets and variables > Actions.
         env:
+          EMBEDDING_PROVIDER: minimax
           EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+          EMBEDDING_BASE_URL: https://api.minimaxi.com/v1
+          EMBEDDING_MODEL: embo-01
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          MODEL_PROVIDER: openai
         continue-on-error: true
         run: |
+          if [ -z "$EMBEDDING_API_KEY" ]; then
+            echo "::warning::EMBEDDING_API_KEY secret not set; skipping hybrid-search step."
+            exit 0
+          fi
           python -m pytest tests/test_hybrid_search.py -v
