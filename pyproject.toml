@@ -1,0 +1,37 @@
+# pyproject.toml — minimal config for ruff + mypy so pre-commit and IDE
+# share the same settings.
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = [".venv", "build", "dist", "md_split"]
+
+[tool.ruff.lint]
+# E/W: pycodestyle errors/warnings (style)
+# F: pyflakes (real bugs: unused imports, undefined names, etc.)
+# I: isort (imports order)
+# B: bugbear (likely bugs)
+# UP: pyupgrade (modern syntax)
+# N: pep8-naming
+select = ["E", "W", "F", "I", "B", "UP", "N"]
+ignore = [
+    "E501",  # line-too-long (we use ruff format which handles this)
+    "B008",  # fastapi Depends() in default arg — required by the framework
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are allowed to use long lines, magic numbers, unused imports.
+"tests/**/*.py" = ["B011"]
+# __init__.py may have unused re-exports.
+"**/__init__.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+no_strict_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
