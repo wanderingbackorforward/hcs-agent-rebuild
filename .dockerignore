@@ -19,7 +19,6 @@ logs
 md_split
 .DS_Store
 Thumbs.db
-web/static
 *.sqlite
 *.sqlite3
 *.db
@@ -28,3 +27,7 @@ web/static
 *.pkl
 .chroma
 .claude
+
+# NOTE: do NOT ignore web/static — FastAPI's StaticFiles mount requires
+# the directory to exist at runtime, and the .gitkeep inside makes the
+# directory ship in the image.
