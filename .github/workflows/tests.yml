@@ -72,3 +72,85 @@ jobs:
             exit 0
           fi
           python -m pytest tests/test_hybrid_search.py -v
+
+  deploy-smoke:
+    # Real Linux deployment smoke. The matrix 'test' job above only proves
+    # the unit tests pass; it does NOT prove the app actually starts. This
+    # job runs the FastAPI app in a container on a real Linux runner and
+    # hits HTTP endpoints, plus starts the MCP stdio server in the
+    # background to verify the process boots. Runs once per push (not in
+    # the matrix) to keep wall-clock reasonable.
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'  # skip on PRs (no Docker access on PR forks)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t hcs-agent-rebuild:smoke .
+
+      - name: Smoke: FastAPI app boots + /docs + /chat respond
+        env:
+          # Dev mode: no key required, just need LLM key for chat completion
+          API_KEYS: ""
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+          EMBEDDING_PROVIDER: minimax
+          EMBEDDING_BASE_URL: https://api.minimaxi.com/v1
+          EMBEDDING_MODEL: embo-01
+        run: |
+          docker run -d --rm --name hcs-smoke \
+            -p 8000:8000 \
+            -e API_KEYS \
+            -e LLM_API_KEY \
+            -e EMBEDDING_API_KEY \
+            -e EMBEDDING_PROVIDER \
+            -e EMBEDDING_BASE_URL \
+            -e EMBEDDING_MODEL \
+            hcs-agent-rebuild:smoke
+          # Wait for container to become healthy (healthcheck hits /docs).
+          for i in $(seq 1 30); do
+            sleep 2
+            if curl -fsS http://127.0.0.1:8000/docs > /dev/null 2>&1; then
+              echo "app up after ${i}x 2s"; break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "::error::app failed to come up in 60s"
+              docker logs hcs-smoke
+              exit 1
+            fi
+          done
+          # /docs 200 OK
+          echo "--- GET /docs ---"
+          curl -fsS -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:8000/docs
+          # /chat with dev-mode auth (no X-API-Key needed) — 200 or 500 OK
+          echo "--- POST /chat (no LLM call will likely 500, that's fine) ---"
+          curl -sS -o /tmp/chat-out -w "status=%{http_code}\n" \
+            -X POST http://127.0.0.1:8000/chat \
+            -H "Content-Type: application/json" \
+            -d '{"message":"smoke test"}' || true
+          echo "body excerpt:" && head -c 200 /tmp/chat-out || true
+          echo ""
+          # /openapi.json 200
+          echo "--- GET /openapi.json ---"
+          curl -fsS -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:8000/openapi.json
+          docker stop hcs-smoke
+
+      - name: Smoke: MCP stdio server boots
+        # The MCP server's only public surface is stdio JSON-RPC. Easiest
+        # smoke: run it for ~5s and verify it hasn't crashed, then kill.
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          timeout 8 python -m mcp_server.server < /dev/null 2>&1 | head -20 &
+          PID=$!
+          sleep 4
+          if kill -0 $PID 2>/dev/null; then
+            echo "MCP server still running after 4s — boot OK"
+            kill $PID 2>/dev/null || true
+            wait $PID 2>/dev/null || true
+          else
+            echo "::error::MCP server died within 4s of startup"
+            exit 1
+          fi
