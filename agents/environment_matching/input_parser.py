@@ -52,6 +52,7 @@ class EnvironmentInputParser:
     "components": ["mysql", "redis", "kafka", ...] 或 [],
     "region": "beijing" | "shanghai" | null,
     "service_status": "available" | "busy" | "unknown" | null,
+    "deploy_method": "docker" | "systemd" | "hcs" | null,
     "resource_usage": null,
     "unrelated": false
 }}
@@ -59,4 +60,5 @@ class EnvironmentInputParser:
 规则：
 - 只提取明确提到的信息，不要推测。
 - components 为列表，如果用户提到多个组件请全部列出。
+- deploy_method 枚举：docker(容器)/systemd(systemd 托管)/hcs(HCS 平台)。如未提及则为 null。
 - 如果输入与环境匹配完全无关，设 unrelated=true 并其他字段为 null。"""

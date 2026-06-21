@@ -53,6 +53,7 @@ class EnvironmentMatchingAgent:
                 "components": stored.get("components", []),
                 "region": stored.get("region"),
                 "service_status": stored.get("service_status"),
+                "deploy_method": stored.get("deploy_method"),
                 "resource_usage": stored.get("resource_usage"),
             }
         return self.history_by_session[sid]

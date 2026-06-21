@@ -12,12 +12,14 @@ class EnvironmentRepository:
         return self._session_manager.get_session()
 
     def add(self, name: str, env_type: str, region: str = None,
-            components: list = None, host: str = None, port: int = None,
+            components: list = None, deploy_method: str = None,
+            host: str = None, port: int = None,
             status: str = "unknown", description: str = None) -> Environment:
         with self._session() as session:
             env = Environment(
                 name=name, env_type=env_type, region=region,
-                components=components or [], host=host, port=port,
+                components=components or [], deploy_method=deploy_method,
+                host=host, port=port,
                 status=status, description=description,
             )
             session.add(env)
@@ -39,13 +41,16 @@ class EnvironmentRepository:
 
     def filter_candidates(self, env_type: str = None,
                           components: List[str] = None,
-                          region: str = None) -> List[Environment]:
+                          region: str = None,
+                          deploy_method: str = None) -> List[Environment]:
         with self._session() as session:
             query = session.query(Environment).filter(Environment.is_active == 1)
             if env_type:
                 query = query.filter(Environment.env_type == env_type)
             if region:
                 query = query.filter(Environment.region == region)
+            if deploy_method:
+                query = query.filter(Environment.deploy_method == deploy_method)
             results = query.all()
             if components:
                 results = [

@@ -42,6 +42,7 @@ class EnvironmentService:
             "env_type": env.env_type,
             "region": env.region,
             "components": env.components,
+            "deploy_method": env.deploy_method,
             "host": env.host,
             "port": env.port,
             "status": env.status,

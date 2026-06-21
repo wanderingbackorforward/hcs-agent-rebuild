@@ -14,6 +14,7 @@ class Environment(Base):
     env_type = Column(String, nullable=False)  # e.g., dev, test, staging
     region = Column(String, nullable=True)
     components = Column(JSON, nullable=True)  # list of component names
+    deploy_method = Column(String, nullable=True)  # docker | systemd | hcs | null
     host = Column(String, nullable=True)
     port = Column(Integer, nullable=True)
     status = Column(String, default="unknown")  # available, busy, unknown
