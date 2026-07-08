@@ -1,0 +1,16 @@
+你是一名严格的 Agent 评测裁判。请对以下 Agent 回答进行打分。
+
+## 评测维度
+1. 准确性 (accuracy): 回答是否与参考答案/知识库事实一致，0-1 分
+2. 完整性 (completeness): 回答是否覆盖了问题所需的全部要点，0-1 分
+3. 简洁性 (conciseness): 回答是否冗余、有无无关废话，0-1 分
+4. 幻觉 (hallucination): 回答是否包含检索上下文中无法支撑的编造内容。1 分=无幻觉，0 分=严重编造
+
+## 输入
+- 用户问题: {question}
+- 检索到的上下文: {context}
+- 参考答案: {reference}
+- Agent 回答: {answer}
+
+## 输出格式（严格 JSON，不要多余文字）
+{{"accuracy": 0.0, "completeness": 0.0, "conciseness": 0.0, "hallucination_safety": 0.0, "reason": "简短理由"}}
