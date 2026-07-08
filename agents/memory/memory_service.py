@@ -35,6 +35,22 @@ class MemoryService:
             session_repo=session_repo, session_id=session_id,
         )
 
+        # Wire STM → TaskMemory sink: when STM compresses/refreshes summary,
+        # key info is sunk into TaskMemory as structured intermediate results.
+        self.short_term.set_sink_callback(self._sink_to_task)
+
+    def _sink_to_task(self, summary: str):
+        """Sink STM summary key info into TaskMemory.
+
+        Called by ShortTermMemory on compress/refresh — extracts the summary
+        and stores it as a task memory intermediate result so task state
+        reflects the latest conversation context.
+        """
+        try:
+            self.task_memory.add_result("stm_summary", {"summary": summary[:200]})
+        except Exception as e:
+            logger.warning("STM→Task sink failed: %s", e)
+
     def reset_all(self):
         """Clear all memory layers (full session reset)."""
         self.short_term.clear()

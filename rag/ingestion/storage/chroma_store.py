@@ -72,3 +72,12 @@ class ChromaStore:
         )
         docs = results.get("documents", [])
         return "\n".join(docs) if docs else None
+
+    def update_metadata(self, ids: List[str], metadata_update: Dict):
+        """Update metadata for existing documents by ID."""
+        self.collection.update(ids=ids, metadatas=[metadata_update] * len(ids))
+
+    def query_with_filter(self, query_embedding: List[float], top_k: int = 5,
+                          where: Dict = None) -> List[Tuple[str, str, float, Dict]]:
+        """Query with a metadata filter (alias for query with filters param)."""
+        return self.query(query_embedding, top_k=top_k, filters=where)

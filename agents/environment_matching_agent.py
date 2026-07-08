@@ -15,6 +15,7 @@ from agents.environment_matching import (
     EnvironmentMessageBuilder,
 )
 from agents.memory.task_memory import TaskMemory
+from agents.context_manager import ContextManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,13 @@ class EnvironmentMatchingAgent:
                 session_repo=self.db.session, session_id=self.session_id,
             )
 
+        # U2: Context manager — layered assembly with token budget.
+        self.context_manager = ContextManager(
+            short_term_memory=self.short_term_memory,
+            long_term_memory=self.long_term_memory,
+            task_memory=self.task_memory,
+        )
+
     def _get_chat_history(self, sid: str) -> InMemoryChatMessageHistory:
         if sid not in self.chats_by_session_id:
             self.chats_by_session_id[sid] = InMemoryChatMessageHistory()
@@ -87,19 +95,41 @@ class EnvironmentMatchingAgent:
         self.task_memory.set_task("environment_matching")
         self.task_memory.update_progress("query", user_input)
 
+        # U1: Store user input in short-term memory.
+        self.short_term_memory.add_message("user", user_input)
+
         history = self._get_history(sid)
         # U3: Record collected fields into task memory.
         self.task_memory.update_progress("collected_fields", {
             k: v for k, v in history.items() if v
         })
 
+        # Collect AI response tokens to store in memory after streaming.
+        ai_response_parts = []
+
         async for token in self.processor.process_step(user_input, sid, history):
+            ai_response_parts.append(token)
             yield token
+
+        ai_response = "".join(ai_response_parts)
+
+        # U1: Store AI response in short-term memory.
+        self.short_term_memory.add_message("ai", ai_response)
+
+        # U1: Refresh rolling summary every turn (not just on overflow).
+        self.short_term_memory.refresh_summary()
 
         # U3: Store matching result as intermediate result.
         self.task_memory.add_result("env_match_step", {
             "fields_complete": len(self.processor.find_missing_fields(history)) == 0,
+            "response_length": len(ai_response),
         })
+
+        # U1: Memory gating — persist valuable env info to long-term memory.
+        env_summary = "环境匹配: {}".format(
+            ", ".join(f"{k}={v}" for k, v in history.items() if v)
+        )
+        self.long_term_memory.store_memory(env_summary)
 
         audit_event(
             layer="worker",
@@ -117,4 +147,5 @@ class EnvironmentMatchingAgent:
     def reset(self):
         self.chat_history.clear()
         self.history_by_session = {}
+        self.short_term_memory.clear()
         self.task_memory.archive()

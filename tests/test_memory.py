@@ -435,7 +435,7 @@ def test_ltm_no_llm_returns_empty_extraction():
     store = FakeStore()
     ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
     importance, mem_type, extracted = ltm._judge_and_extract("任意内容")
-    assert importance == 0.6
+    assert importance == 0.75
     assert mem_type == "fact"
     assert extracted == {}
 
@@ -546,3 +546,208 @@ def test_ltm_prompt_loaded_from_file():
     assert "{content}" in template
     assert "importance" in template
     assert "entities" in template
+
+
+# --- Conflict resolution (batch B) ---
+
+def test_ltm_importance_threshold_is_07():
+    """IMPORTANCE_THRESHOLD should be 0.7 (conflict prevention)."""
+    from agents.memory.long_term_memory import IMPORTANCE_THRESHOLD
+    assert IMPORTANCE_THRESHOLD == 0.7
+
+
+def test_ltm_superseded_memories_filtered_in_retrieve():
+    """Memories with superseded=True should be skipped in retrieve()."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
+    ltm._judge_and_extract = lambda c: (0.9, "preference", {})
+    ltm.store_memory("用户偏好 Linux 环境")
+
+    # Manually mark the stored memory as superseded.
+    for i, (doc_id, text, emb, meta) in enumerate(store._docs):
+        store._docs[i] = (doc_id, text, emb, {**meta, "superseded": True})
+
+    results = ltm.retrieve("用户偏好", top_k=3)
+    assert len(results) == 0  # Superseded memory should be filtered out
+
+
+def test_ltm_conflict_dedup_by_type():
+    """retrieve() should group by memory_type and keep only the best per type."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
+
+    # Store two memories of the same type with different content.
+    ltm._judge_and_extract = lambda c: (0.9, "preference", {})
+    ltm.store_memory("用户偏好 Python 3.10")
+    ltm.store_memory("用户偏好 Python 3.12")  # newer, should win
+
+    results = ltm.retrieve("Python 偏好", top_k=5)
+    # Should return at most 1 result per type (conflict dedup).
+    types = [r["memory_type"] for r in results]
+    assert types.count("preference") <= 1
+
+
+def test_ltm_mark_superseded_called_on_store():
+    """store_memory should call _mark_superseded to override old same-type memories."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
+
+    # Track if _mark_superseded is called.
+    called = [False]
+    original = ltm._mark_superseded
+    def tracking_wrapper(mem_type, emb):
+        called[0] = True
+        original(mem_type, emb)
+    ltm._mark_superseded = tracking_wrapper
+
+    ltm._judge_and_extract = lambda c: (0.9, "preference", {})
+    ltm.store_memory("用户偏好 Python")
+    assert called[0] is True
+
+
+# --- Per-turn summary refresh (batch C) ---
+
+def test_stm_refresh_summary_updates_summary():
+    """refresh_summary should generate a summary even without overflow."""
+    stm = ShortTermMemory(llm=FakeLLM())
+    stm.add_message("user", "什么是 SDK")
+    stm.add_message("ai", "SDK 是软件开发工具包")
+    assert stm.summary == ""  # No summary yet (below max_turns)
+    stm.refresh_summary()
+    assert stm.summary != ""  # Summary should be generated
+
+
+def test_stm_refresh_summary_noop_without_llm():
+    """refresh_summary should be a no-op without LLM."""
+    stm = ShortTermMemory(llm=None)
+    stm.add_message("user", "test")
+    stm.add_message("ai", "test")
+    stm.refresh_summary()
+    assert stm.summary == ""
+
+
+def test_stm_refresh_summary_noop_without_messages():
+    """refresh_summary should be a no-op with less than 2 messages."""
+    stm = ShortTermMemory(llm=FakeLLM())
+    stm.add_message("user", "test")
+    stm.refresh_summary()
+    assert stm.summary == ""
+
+
+# --- Task archive to SQLite (batch C) ---
+
+def test_tm_archive_persists_to_sqlite():
+    """archive() should persist task data to _task_archive in SQLite."""
+    class FakeRepo:
+        def __init__(self):
+            self.fields = {}
+
+        def get_fields(self, sid):
+            return self.fields.get(sid, {})
+
+        def update_fields(self, sid, fields):
+            current = self.fields.get(sid, {})
+            current.update(fields)
+            self.fields[sid] = current
+
+    repo = FakeRepo()
+    tm = TaskMemory(session_repo=repo, session_id="s1")
+    tm.set_task("knowledge_qa")
+    tm.update_progress("query", "test")
+    tm.add_result("answer", {"length": 100})
+    tm.archive()
+
+    # Archive should be persisted.
+    fields = repo.get_fields("s1")
+    archive = fields.get("_task_archive", [])
+    assert len(archive) == 1
+    assert archive[0]["task_type"] == "knowledge_qa"
+    assert archive[0]["result_count"] == 1
+
+
+def test_tm_archive_idle_is_noop():
+    """archive() on idle task should be a no-op."""
+    class FakeRepo:
+        def __init__(self):
+            self.fields = {}
+
+        def get_fields(self, sid):
+            return self.fields.get(sid, {})
+
+        def update_fields(self, sid, fields):
+            self.fields[sid] = fields
+
+    repo = FakeRepo()
+    tm = TaskMemory(session_repo=repo, session_id="s1")
+    tm.archive()
+    fields = repo.get_fields("s1")
+    assert "_task_archive" not in fields
+
+
+def test_tm_archive_keeps_last_10():
+    """Archive list should be capped at 10 entries."""
+    class FakeRepo:
+        def __init__(self):
+            self.fields = {}
+
+        def get_fields(self, sid):
+            return self.fields.get(sid, {})
+
+        def update_fields(self, sid, fields):
+            current = self.fields.get(sid, {})
+            current.update(fields)
+            self.fields[sid] = current
+
+    repo = FakeRepo()
+    for i in range(12):
+        tm = TaskMemory(session_repo=repo, session_id="s1")
+        tm.set_task("test_{}".format(i))
+        tm.archive()
+
+    archive = repo.get_fields("s1").get("_task_archive", [])
+    assert len(archive) == 10
+
+
+# --- STM sink to TaskMemory (batch D) ---
+
+def test_stm_sink_callback_called_on_compress():
+    """_compress should call sink_callback with the summary."""
+    received = []
+    stm = ShortTermMemory(llm=FakeLLM(), max_turns=4)
+    stm.set_sink_callback(lambda summary: received.append(summary))
+    for i in range(6):
+        stm.add_message("user", f"问题{i}")
+        stm.add_message("ai", f"回答{i}")
+    assert len(received) > 0
+    assert received[0] != ""
+
+
+def test_stm_sink_callback_called_on_refresh():
+    """refresh_summary should call sink_callback."""
+    received = []
+    stm = ShortTermMemory(llm=FakeLLM())
+    stm.set_sink_callback(lambda summary: received.append(summary))
+    stm.add_message("user", "测试")
+    stm.add_message("ai", "回复")
+    stm.refresh_summary()
+    assert len(received) > 0
+
+
+def test_ms_sink_wires_stm_to_task():
+    """MemoryService should wire STM sink to TaskMemory."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ms = MemoryService(
+        session_id="s1", llm=FakeLLM(),
+        embedder=embedder, store=store,
+    )
+    # Add messages and trigger compress.
+    for i in range(6):
+        ms.short_term.add_message("user", f"问题{i}")
+        ms.short_term.add_message("ai", f"回答{i}")
+    # Task memory should have received the sink.
+    summaries = ms.task_memory.get_results("stm_summary")
+    assert len(summaries) > 0

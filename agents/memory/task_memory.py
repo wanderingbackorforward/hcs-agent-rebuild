@@ -92,8 +92,36 @@ class TaskMemory:
         return "\n".join(lines)
 
     def archive(self):
-        """Archive task — could write summary to long-term memory. Clears after."""
+        """Archive task — persist key data to SQLite, then clear.
+
+        Writes the task summary (type + final progress + result count) to
+        the session's extracted_fields under '_task_archive' so completed
+        task data is preserved for auditing, then clears current state.
+        """
+        if self._state["task_type"] == "idle":
+            return  # Nothing to archive.
+
         logger.info("TaskMemory: archiving task '%s'", self._state["task_type"])
+
+        # Persist to SQLite as an archive entry.
+        if self._repo and self._session_id:
+            try:
+                fields = self._repo.get_fields(self._session_id)
+                archive_list = fields.get("_task_archive", [])
+                archive_list.append({
+                    "task_type": self._state["task_type"],
+                    "progress": self._state.get("progress", {}),
+                    "result_count": len(self._state.get("results", [])),
+                    "final_result": self._state.get("results", [{}])[-1]
+                                    if self._state.get("results") else None,
+                })
+                # Keep last 10 archived tasks to prevent unbounded growth.
+                archive_list = archive_list[-10:]
+                self._repo.update_fields(self._session_id,
+                                         {"_task_archive": archive_list})
+            except Exception as e:
+                logger.warning("TaskMemory archive persistence failed: %s", e)
+
         self.clear()
 
     def clear(self):

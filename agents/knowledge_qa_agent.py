@@ -197,6 +197,9 @@ class KnowledgeQAAgent:
         # U1: Store AI response in short-term memory.
         self.short_term_memory.add_message("ai", answer)
 
+        # U1: Refresh rolling summary every turn (not just on overflow).
+        self.short_term_memory.refresh_summary()
+
         # U3: Store answer as intermediate result.
         self.task_memory.add_result("answer", {"length": len(answer)})
         self.task_memory.update_progress("answered", True)

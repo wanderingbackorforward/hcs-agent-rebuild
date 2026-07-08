@@ -29,6 +29,7 @@ class ShortTermMemory:
         self.max_turns = max_turns
         self._messages: List[dict] = []
         self._summary: str = ""
+        self._sink_callback = None  # Called to sink key info to TaskMemory.
 
     @property
     def messages(self) -> List[dict]:
@@ -38,10 +39,49 @@ class ShortTermMemory:
     def summary(self) -> str:
         return self._summary
 
+    def set_sink_callback(self, callback):
+        """Register a callback to sink key info to TaskMemory on compress/refresh.
+
+        callback(summary: str) -> None
+        """
+        self._sink_callback = callback
+
     def add_message(self, role: str, content: str):
         self._messages.append({"role": role, "content": content})
         if len(self._messages) > self.max_turns:
             self._compress()
+
+    def refresh_summary(self):
+        """Refresh rolling summary every turn (not just on overflow).
+
+        Called after each AI response to keep the summary up-to-date.
+        Generates a lightweight summary of the full conversation so far,
+        so the ContextManager always has the latest state — even before
+        overflow triggers _compress().
+        """
+        if not self.llm or len(self._messages) < 2:
+            return  # Not enough context to summarize.
+
+        # Build a transcript of all messages for a lightweight refresh.
+        transcript = "\n".join(
+            "User: {}".format(m["content"]) if m["role"] == "user"
+            else "AI: {}".format(m["content"])
+            for m in self._messages
+        )
+
+        existing = "\nPrevious summary:\n{}\n".format(self._summary) if self._summary else ""
+        prompt = _load_prompt_template(_STM_PROMPT_FILE).format(
+            existing=existing, transcript=transcript,
+        )
+
+        try:
+            result = self.llm.invoke([HumanMessage(content=prompt)])
+            self._summary = result.content.strip()
+            # Sink key info to TaskMemory if callback registered.
+            if self._sink_callback and self._summary:
+                self._sink_callback(self._summary)
+        except Exception as e:
+            logger.warning("Summary refresh failed: %s", e)
 
     def _compress(self):
         to_summarize = self._messages[:-KEEP_RECENT]
@@ -65,6 +105,9 @@ class ShortTermMemory:
                 # Use sync invoke directly — works in both sync and async contexts.
                 result = self.llm.invoke([HumanMessage(content=prompt)])
                 self._summary = result.content.strip()
+                # Sink key info to TaskMemory if callback registered.
+                if self._sink_callback and self._summary:
+                    self._sink_callback(self._summary)
             except Exception as e:
                 logger.warning("Summary compression failed: %s", e)
                 self._summary = (self._summary + " " + transcript)[-500:]

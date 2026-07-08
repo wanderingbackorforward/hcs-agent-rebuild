@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 MEMORY_COLLECTION = "agent_long_term_memory"
 DEFAULT_TTL = 30 * 24 * 3600
 RECENCY_HALFLIFE = 7 * 24 * 3600
-IMPORTANCE_THRESHOLD = 0.5
+IMPORTANCE_THRESHOLD = 0.7  # below this -> not stored (conflict prevention)
 CONFIDENCE_THRESHOLD = 0.15  # combined score below this -> not injected
 
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
@@ -92,7 +92,7 @@ class LongTermMemory:
         a dict with 'entities' and 'relations' keys for structured retrieval.
         """
         if not self.llm:
-            return 0.6, "fact", {}
+            return 0.75, "fact", {}  # optimistic default above threshold
 
         prompt = _load_prompt_template(_LTM_PROMPT_FILE).format(content=content)
 
@@ -121,6 +121,34 @@ class LongTermMemory:
         importance, mem_type, _ = self._judge_and_extract(content)
         return importance, mem_type
 
+    def _mark_superseded(self, mem_type: str, query_embedding: List[float]):
+        """Mark existing memories of the same type as superseded (conflict resolution).
+
+        Newer information overrides older conflicting records. We find similar
+        memories of the same type and set superseded=True so retrieve() skips them.
+        """
+        if not self.store or not self.embedder:
+            return
+        try:
+            # Search for existing memories of the same type.
+            results = self.store.query(
+                query_embedding, top_k=10,
+                filters={"memory_type": mem_type},
+            )
+            if not results:
+                return
+            ids_to_supersede = []
+            for doc_id, text, score, meta in results:
+                # Only supersede if not already superseded.
+                if not meta.get("superseded", False):
+                    ids_to_supersede.append(doc_id)
+            if ids_to_supersede:
+                self.store.update_metadata(ids_to_supersede, {"superseded": True})
+                logger.info("Marked %d memories as superseded (type=%s)",
+                            len(ids_to_supersede), mem_type)
+        except Exception as e:
+            logger.warning("Failed to mark superseded memories: %s", e)
+
     def store_memory(self, content: str, metadata: dict = None) -> bool:
         importance, mem_type, extracted = self._judge_and_extract(content)
 
@@ -142,6 +170,10 @@ class LongTermMemory:
         try:
             if self.store and self.embedder:
                 embedding = self._embed(content)
+
+                # Conflict resolution: mark same-type similar memories as superseded.
+                self._mark_superseded(mem_type, embedding)
+
                 doc_id = "mem_{}".format(int(entry.timestamp * 1000))
                 self.store.upsert(
                     doc_id=doc_id,
@@ -172,10 +204,13 @@ class LongTermMemory:
             if self.reranker and results:
                 results = self.reranker.rerank(query, results, top_k=top_k)
 
-            # Stage 3: weighted scoring + confidence filter
+            # Stage 3: weighted scoring + confidence filter + conflict dedup
             now = time.time()
             scored = []
             for doc_id, text, score, meta in results:
+                # Skip superseded memories (conflict resolution).
+                if meta.get("superseded", False):
+                    continue
                 # ChromaDB returns cosine distance; reranker returns similarity.
                 # If score > 1.0 it's a reranker score (higher=better);
                 # if 0..2 it's a distance (convert).
@@ -199,7 +234,21 @@ class LongTermMemory:
                     "memory_type": meta.get("memory_type", "fact"),
                     "timestamp": mem_time,
                 })
-            scored.sort(key=lambda x: x["score"], reverse=True)
+
+            # Conflict dedup: group by memory_type, keep only the newest
+            # highest-scoring record per type (avoids contradictory info).
+            by_type = {}
+            for item in scored:
+                mtype = item["memory_type"]
+                if mtype not in by_type:
+                    by_type[mtype] = item
+                else:
+                    # Keep the one with higher combined score (recency already
+                    # factored in, so newer + more relevant wins).
+                    if item["score"] > by_type[mtype]["score"]:
+                        by_type[mtype] = item
+            scored = sorted(by_type.values(),
+                            key=lambda x: x["score"], reverse=True)
             return scored[:top_k]
         except Exception as e:
             logger.warning("Memory retrieval failed: %s", e)
