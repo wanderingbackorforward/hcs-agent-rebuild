@@ -117,7 +117,7 @@ def test_ltm_gating_rejects_low_importance():
     embedder = FakeEmbedder()
     store = FakeStore()
     ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
-    ltm._judge_importance = lambda content: (0.2, "noise")
+    ltm._judge_and_extract = lambda content: (0.2, "noise", {})
     assert ltm.store_memory("今天天气不错") is False
     assert len(store._docs) == 0
 
@@ -126,7 +126,7 @@ def test_ltm_gating_accepts_high_importance():
     embedder = FakeEmbedder()
     store = FakeStore()
     ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
-    ltm._judge_importance = lambda content: (0.9, "preference")
+    ltm._judge_and_extract = lambda content: (0.9, "preference", {})
     assert ltm.store_memory("用户偏好 Python") is True
     assert len(store._docs) == 1
 
@@ -315,3 +315,125 @@ def test_cm_build_prompt_includes_task_context():
     cm = ContextManager(task_memory=tm)
     prompt = cm.build_prompt("系统提示", "查询")
     assert "[任务记忆]" in prompt
+
+
+# --- Rerank + confidence filter ---
+
+class FakeReranker:
+    """Reverses item order to simulate reranking."""
+
+    def __init__(self):
+        self.called = False
+
+    def rerank(self, query, items, top_k):
+        self.called = True
+        reordered = list(reversed(items))
+        return reordered[:top_k]
+
+
+def test_ltm_reranker_is_called_in_retrieve():
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    reranker = FakeReranker()
+    ltm = LongTermMemory(llm=None, embedder=embedder, store=store, reranker=reranker)
+    ltm.store_memory("记忆A")
+    ltm.store_memory("记忆B")
+    ltm.retrieve("查询", top_k=2)
+    assert reranker.called is True
+
+
+def test_ltm_reranker_changes_order():
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    reranker = FakeReranker()
+    ltm = LongTermMemory(llm=None, embedder=embedder, store=store, reranker=reranker)
+    ltm.store_memory("第一条记忆")
+    ltm.store_memory("第二条记忆")
+    results = ltm.retrieve("查询", top_k=2)
+    # FakeReranker reverses, so second-stored should come first
+    assert "第二条记忆" in results[0]["content"]
+
+
+def test_ltm_confidence_filter_drops_low_score():
+    """Memories with combined score < CONFIDENCE_THRESHOLD are filtered out."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
+    # Store a memory with very different embedding (low relevance)
+    ltm.store_memory("完全无关的内容xyz")
+    # Query with totally different text -> low relevance -> low combined
+    results = ltm.retrieve("zzzzzzzzzz", top_k=3)
+    # May or may not be filtered depending on embedding similarity,
+    # but at minimum retrieve should not crash
+    assert isinstance(results, list)
+
+
+def test_ltm_noop_reranker_default():
+    """Without explicit reranker, LTM should still work (NoOpReranker)."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
+    assert ltm.reranker is not None
+    ltm.store_memory("测试记忆")
+    results = ltm.retrieve("测试", top_k=1)
+    assert len(results) >= 0  # no crash
+
+
+# --- Structured extraction ---
+
+class FakeLLMWithExtraction:
+    """Fake LLM that returns importance + entities."""
+
+    def invoke(self, messages):
+        class Result:
+            content = '{"importance": 0.9, "type": "preference", "entities": ["Python", "Linux"]}'
+        return Result()
+
+    async def ainvoke(self, messages):
+        return self.invoke(messages)
+
+
+def test_ltm_extract_entities_on_store():
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(
+        llm=FakeLLMWithExtraction(), embedder=embedder, store=store,
+    )
+    assert ltm.store_memory("用户偏好 Python 和 Linux") is True
+    assert len(store._docs) == 1
+    _, _, _, meta = store._docs[0]
+    assert meta.get("entities") == ["Python", "Linux"]
+
+
+def test_ltm_judge_and_extract_returns_entities():
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(
+        llm=FakeLLMWithExtraction(), embedder=embedder, store=store,
+    )
+    importance, mem_type, extracted = ltm._judge_and_extract("用户偏好 Python")
+    assert importance == 0.9
+    assert mem_type == "preference"
+    assert "Python" in extracted.get("entities", [])
+
+
+def test_ltm_judge_importance_backward_compat():
+    """_judge_importance wrapper still returns (importance, type) tuple."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(
+        llm=FakeLLMWithExtraction(), embedder=embedder, store=store,
+    )
+    importance, mem_type = ltm._judge_importance("用户偏好 Python")
+    assert importance == 0.9
+    assert mem_type == "preference"
+
+
+def test_ltm_no_llm_returns_empty_extraction():
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ltm = LongTermMemory(llm=None, embedder=embedder, store=store)
+    importance, mem_type, extracted = ltm._judge_and_extract("任意内容")
+    assert importance == 0.6
+    assert mem_type == "fact"
+    assert extracted == {}

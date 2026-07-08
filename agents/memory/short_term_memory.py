@@ -56,16 +56,9 @@ class ShortTermMemory:
 
         if self.llm:
             try:
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    result = self.llm.invoke([HumanMessage(content=prompt)])
-                    self._summary = result.content.strip()
-                else:
-                    result = loop.run_until_complete(
-                        self.llm.ainvoke([HumanMessage(content=prompt)])
-                    )
-                    self._summary = result.content.strip()
+                # Use sync invoke directly — works in both sync and async contexts.
+                result = self.llm.invoke([HumanMessage(content=prompt)])
+                self._summary = result.content.strip()
             except Exception as e:
                 logger.warning("Summary compression failed: %s", e)
                 self._summary = (self._summary + " " + transcript)[-500:]
