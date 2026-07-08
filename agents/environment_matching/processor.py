@@ -2,6 +2,8 @@
 import logging
 from typing import AsyncGenerator, Dict, List
 
+from agents.context_lock import clear_lock
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +61,9 @@ class EnvironmentMatchingProcessor:
         self.db.session.update_fields(session_id, history)
         candidates = self.environment_service.match(history)
         yield self.message_builder.build_candidates(candidates)
+
+        # Task fully done: one manual unlock (the single explicit clear site).
+        clear_lock(self.db.session, session_id)
 
         if candidates:
             # Validate top candidate

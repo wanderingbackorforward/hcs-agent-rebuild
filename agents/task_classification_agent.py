@@ -3,6 +3,7 @@ import logging
 
 from config.model_provider import create_chat_model
 from config.constants import SharedState
+from db.db_router import DatabaseRouter
 from agents.task_classification import (
     StateManager,
     TaskClassifier,
@@ -15,10 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class TaskClassificationAgent:
-    def __init__(self, environment_agent, knowledge_agent):
+    def __init__(self, environment_agent, knowledge_agent, db_router=None):
         self.environment_agent = environment_agent
         self.knowledge_agent = knowledge_agent
         self.llm = create_chat_model(temperature=0)
+        self.db = db_router or DatabaseRouter()
 
         shared_state = SharedState()
         self.state_manager = StateManager(shared_state)
@@ -30,6 +32,8 @@ class TaskClassificationAgent:
             self.state_manager,
             self.agent_router,
             self.unrelated_handler,
+            session_repo=self.db.session,
+            llm=self.llm,
         )
 
         # Wire cross-agent callbacks
