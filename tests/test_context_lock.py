@@ -137,6 +137,43 @@ def test_env_completion_clears_lock(tmp_path):
     assert not load_lock(repo, "s6").is_active
 
 
+def test_multi_intent_conflict_triggers_clarify(tmp_path):
+    """One sentence spanning env + qa with a conjunction -> ask, don't execute."""
+    repo = _repo(tmp_path)
+    save_lock(repo, "s7", "environment_match", {"env_type": "dev"})
+    proc = _processor(repo, intent="environment_match")
+    out = asyncio.run(_collect(proc.process_task_stream(
+        "找有 Kafka 的环境，顺便问下 Kafka 怎么安装", "s7")))
+    # low confidence -> clarify, no classify, no route to agent
+    assert proc.classifier.call_count == 0
+    assert proc.router.routed == []
+    assert "环境" in out and "技术" in out  # clarify question mentions both
+
+
+def test_vague_reference_triggers_clarify(tmp_path):
+    """Pure reference + no params -> ask for detail, don't execute."""
+    repo = _repo(tmp_path)
+    save_lock(repo, "s8", "knowledge_qa", {})  # empty params
+    proc = _processor(repo, intent="knowledge_qa")
+    out = asyncio.run(_collect(proc.process_task_stream("那个", "s8")))
+    assert proc.classifier.call_count == 0
+    assert proc.router.routed == []
+    assert "补充" in out or "具体" in out
+
+
+def test_single_intent_kb_question_not_conflict(tmp_path):
+    """A normal 'Kafka 怎么安装' (component + how, NO conjunction) is NOT a
+    conflict — it's a single knowledge_qa question and routes normally."""
+    repo = _repo(tmp_path)
+    save_lock(repo, "s9", "knowledge_qa", {"topic": "sdk"})
+    proc = _processor(repo, intent="knowledge_qa")
+    out = asyncio.run(_collect(proc.process_task_stream("Kafka怎么安装", "s9")))
+    # continuation + high confidence -> routes reusing lock, no classify
+    assert proc.classifier.call_count == 0
+    assert len(proc.router.routed) == 1
+    assert "knowledge_qa" in out
+
+
 async def _collect(gen):
     out = ""
     async for t in gen:
