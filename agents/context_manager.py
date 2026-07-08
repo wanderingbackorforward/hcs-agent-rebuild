@@ -31,10 +31,12 @@ class ContextManager:
     """Manages context window budget with token counting and overflow handling."""
 
     def __init__(self, max_tokens: int = DEFAULT_MAX_TOKENS,
-                 short_term_memory=None, long_term_memory=None):
+                 short_term_memory=None, long_term_memory=None,
+                 task_memory=None):
         self.max_tokens = max_tokens
         self.short_term = short_term_memory
         self.long_term = long_term_memory
+        self.task_memory = task_memory
 
     def assemble_context(self, system_prompt: str, query: str,
                          max_tokens: int = None) -> dict:
@@ -46,17 +48,28 @@ class ContextManager:
         if self.long_term:
             memory_context = self.long_term.get_context(query, top_k=3)
 
+        task_context = ""
+        if self.task_memory:
+            task_context = self.task_memory.get_context()
+
         conversation_context = ""
         if self.short_term:
             conversation_context = self.short_term.get_context()
 
         total = (count_tokens(system_prompt) + count_tokens(memory_context)
+                 + count_tokens(task_context)
                  + count_tokens(conversation_context) + count_tokens(query))
 
         if total > available:
             overflow = True
             if count_tokens(memory_context) > 200 and self.long_term:
                 memory_context = self.long_term.get_context(query, top_k=1)
+                total = (count_tokens(system_prompt) + count_tokens(memory_context)
+                         + count_tokens(task_context)
+                         + count_tokens(conversation_context) + count_tokens(query))
+
+            if total > available and self.task_memory:
+                task_context = ""  # drop task context first (least critical)
                 total = (count_tokens(system_prompt) + count_tokens(memory_context)
                          + count_tokens(conversation_context) + count_tokens(query))
 
@@ -78,6 +91,7 @@ class ContextManager:
         return {
             "system_prompt": system_prompt,
             "memory_context": memory_context,
+            "task_context": task_context,
             "conversation_context": conversation_context,
             "query": query,
             "token_count": total,
@@ -90,6 +104,8 @@ class ContextManager:
         parts = [ctx["system_prompt"]]
         if ctx["memory_context"]:
             parts.append(ctx["memory_context"])
+        if ctx["task_context"]:
+            parts.append(ctx["task_context"])
         if ctx["conversation_context"]:
             parts.append(ctx["conversation_context"])
         parts.append("## 当前问题\n{}".format(query))

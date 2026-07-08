@@ -5,6 +5,7 @@ import uuid
 from langchain_core.chat_history import InMemoryChatMessageHistory
 
 from config.model_provider import create_chat_model
+from config.audit import audit_event, set_trace_context
 from db.db_router import DatabaseRouter
 from services.environment_service import EnvironmentService
 from services.probe_service import ProbeService
@@ -13,6 +14,7 @@ from agents.environment_matching import (
     EnvironmentMatchingProcessor,
     EnvironmentMessageBuilder,
 )
+from agents.memory.task_memory import TaskMemory
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,11 @@ class EnvironmentMatchingAgent:
         self.chat_history = self._get_chat_history(self.session_id)
         self.history_by_session = {}
 
+        # U3: Task memory - track env-matching progress and results.
+        self.task_memory = TaskMemory(
+            session_repo=self.db.session, session_id=self.session_id,
+        )
+
     def _get_chat_history(self, sid: str) -> InMemoryChatMessageHistory:
         if sid not in self.chats_by_session_id:
             self.chats_by_session_id[sid] = InMemoryChatMessageHistory()
@@ -60,9 +67,37 @@ class EnvironmentMatchingAgent:
 
     async def process_stream(self, user_input: str, session_id: str = None):
         sid = session_id or self.session_id
+        set_trace_context(session_id=sid, agent_name="environment_matching")
+        audit_event(
+            layer="worker",
+            event_type="tool_decision",
+            message="environment_matching agent: parse + match",
+            data={"agent": "environment_matching", "session_id": sid, "query_length": len(user_input)},
+        )
+        # U3: Set task type and track query.
+        self.task_memory.set_task("environment_matching")
+        self.task_memory.update_progress("query", user_input)
+
         history = self._get_history(sid)
+        # U3: Record collected fields into task memory.
+        self.task_memory.update_progress("collected_fields", {
+            k: v for k, v in history.items() if v
+        })
+
         async for token in self.processor.process_step(user_input, sid, history):
             yield token
+
+        # U3: Store matching result as intermediate result.
+        self.task_memory.add_result("env_match_step", {
+            "fields_complete": len(self.processor.find_missing_fields(history)) == 0,
+        })
+
+        audit_event(
+            layer="worker",
+            event_type="response_generated",
+            message="environment_matching agent step done",
+            data={"agent": "environment_matching"},
+        )
 
     async def process(self, user_input: str, session_id: str = None) -> str:
         result = ""
@@ -73,3 +108,4 @@ class EnvironmentMatchingAgent:
     def reset(self):
         self.chat_history.clear()
         self.history_by_session = {}
+        self.task_memory.archive()

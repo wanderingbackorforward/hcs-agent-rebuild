@@ -19,7 +19,7 @@ from db.db_router import DatabaseRouter
 from db.repositories.session_repository import SessionRepository
 from services.knowledge_service import KnowledgeService
 from agents.knowledge_qa import KnowledgeRetriever, ResponseGenerator
-from agents.memory import ShortTermMemory, LongTermMemory
+from agents.memory import ShortTermMemory, LongTermMemory, TaskMemory
 from agents.memory.long_term_memory import MEMORY_COLLECTION
 from agents.context_manager import ContextManager, count_tokens
 from rag.ingestion.storage.chroma_store import ChromaStore
@@ -103,10 +103,16 @@ class KnowledgeQAAgent:
             logger.warning(f"Long-term memory init failed, degrading to no-op: {e}")
             self.long_term_memory = LongTermMemory(llm=self.llm)
 
+        # U3: Task memory - structured task state and intermediate results.
+        self.task_memory = TaskMemory(
+            session_repo=self._session_repo, session_id=self.session_id,
+        )
+
         # U2: Context manager.
         self.context_manager = ContextManager(
             short_term_memory=self.short_term_memory,
             long_term_memory=self.long_term_memory,
+            task_memory=self.task_memory,
         )
 
         # Load existing history into short-term memory.
@@ -133,8 +139,21 @@ class KnowledgeQAAgent:
         await self.ensure_initialized()
         sid = session_id or self.session_id
 
+        # U3: Set task type and track progress.
+        self.task_memory.set_task("knowledge_qa")
+
         # U2: Build context with token budget management.
         results = self.retriever.retrieve(user_query, top_k=5)
+
+        # U3: Store retrieval results as intermediate results.
+        self.task_memory.update_progress("query", user_query)
+        self.task_memory.add_result("retrieval", {
+            "doc_count": len(results),
+            "top_docs": [
+                {"doc_id": did, "title": meta.get("title", did), "score": score}
+                for did, _, score, meta in results[:3]
+            ],
+        })
 
         # U1: Store user query in short-term memory.
         self.short_term_memory.add_message("user", user_query)
@@ -174,6 +193,10 @@ class KnowledgeQAAgent:
         # U1: Store AI response in short-term memory.
         self.short_term_memory.add_message("ai", answer)
 
+        # U3: Store answer as intermediate result.
+        self.task_memory.add_result("answer", {"length": len(answer)})
+        self.task_memory.update_progress("answered", True)
+
         # U1: Memory gating - decide if this conversation is worth persisting.
         conversation_text = f"用户问: {user_query}\nAI答: {answer[:200]}"
         self.long_term_memory.store_memory(conversation_text)
@@ -193,3 +216,4 @@ class KnowledgeQAAgent:
     def reset(self):
         self.chat_history.clear()
         self.short_term_memory.clear()
+        self.task_memory.archive()

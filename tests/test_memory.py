@@ -1,9 +1,10 @@
-"""Tests for layered memory (short-term, long-term, context manager).
+"""Tests for layered memory (short-term, long-term, task, context manager).
 
 Uses FakeEmbedder + FakeStore + FakeLLM — no real API calls.
 """
 from agents.memory.short_term_memory import ShortTermMemory
 from agents.memory.long_term_memory import LongTermMemory
+from agents.memory.task_memory import TaskMemory
 from agents.context_manager import ContextManager, count_tokens
 
 
@@ -203,3 +204,114 @@ def test_cm_overflow_triggers_compression():
     cm = ContextManager(max_tokens=500, short_term_memory=stm)
     ctx = cm.assemble_context("系统", "查询")
     assert ctx["overflow"] is True
+
+
+# --- Task memory ---
+
+def test_tm_idle_returns_empty_context():
+    tm = TaskMemory()
+    assert tm.get_context() == ""
+    assert tm.task_type == "idle"
+
+
+def test_tm_set_task_and_get_context():
+    tm = TaskMemory()
+    tm.set_task("knowledge_qa")
+    tm.update_progress("query", "什么是 SDK")
+    ctx = tm.get_context()
+    assert "[任务记忆]" in ctx
+    assert "knowledge_qa" in ctx
+    assert "什么是 SDK" in ctx
+
+
+def test_tm_add_result_and_retrieve():
+    tm = TaskMemory()
+    tm.set_task("environment_matching")
+    tm.add_result("retrieval", {"doc_count": 3})
+    tm.add_result("validation", {"passed": True})
+    all_results = tm.get_results()
+    assert len(all_results) == 2
+    retrieval = tm.get_results("retrieval")
+    assert len(retrieval) == 1
+    assert retrieval[0]["content"]["doc_count"] == 3
+
+
+def test_tm_clear_resets_to_idle():
+    tm = TaskMemory()
+    tm.set_task("knowledge_qa")
+    tm.add_result("test", {"x": 1})
+    tm.clear()
+    assert tm.task_type == "idle"
+    assert tm.get_results() == []
+    assert tm.get_context() == ""
+
+
+def test_tm_archive_clears_state():
+    tm = TaskMemory()
+    tm.set_task("environment_matching")
+    tm.update_progress("env_type", "dev")
+    tm.archive()
+    assert tm.task_type == "idle"
+    assert tm.progress == {}
+
+
+def test_tm_set_task_resets_previous():
+    tm = TaskMemory()
+    tm.set_task("knowledge_qa")
+    tm.add_result("a", {"x": 1})
+    tm.set_task("environment_matching")
+    assert tm.task_type == "environment_matching"
+    assert tm.get_results() == []
+
+
+def test_tm_results_cap_at_20():
+    tm = TaskMemory()
+    tm.set_task("test")
+    for i in range(25):
+        tm.add_result("step", {"i": i})
+    results = tm.get_results()
+    assert len(results) == 20
+    assert results[-1]["content"]["i"] == 24
+
+
+def test_tm_persistence_with_repo():
+    class FakeRepo:
+        def __init__(self):
+            self.fields = {}
+
+        def get_fields(self, sid):
+            return self.fields.get(sid, {})
+
+        def update_fields(self, sid, fields):
+            current = self.fields.get(sid, {})
+            current.update(fields)
+            self.fields[sid] = current
+
+    repo = FakeRepo()
+    tm1 = TaskMemory(session_repo=repo, session_id="s1")
+    tm1.set_task("knowledge_qa")
+    tm1.update_progress("query", "test query")
+
+    tm2 = TaskMemory(session_repo=repo, session_id="s1")
+    assert tm2.task_type == "knowledge_qa"
+    assert tm2.progress.get("query") == "test query"
+
+
+# --- Context manager + task memory ---
+
+def test_cm_injects_task_context():
+    tm = TaskMemory()
+    tm.set_task("knowledge_qa")
+    tm.update_progress("query", "什么是 SDK")
+    cm = ContextManager(task_memory=tm)
+    ctx = cm.assemble_context("系统提示", "用户问题")
+    assert ctx["task_context"] != ""
+    assert "knowledge_qa" in ctx["task_context"]
+
+
+def test_cm_build_prompt_includes_task_context():
+    tm = TaskMemory()
+    tm.set_task("environment_matching")
+    cm = ContextManager(task_memory=tm)
+    prompt = cm.build_prompt("系统提示", "查询")
+    assert "[任务记忆]" in prompt

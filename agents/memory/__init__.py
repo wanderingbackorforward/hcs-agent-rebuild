@@ -9,5 +9,6 @@ DB with RAG retrieval, memory gating decides what to persist."
 """
 from agents.memory.short_term_memory import ShortTermMemory
 from agents.memory.long_term_memory import LongTermMemory
+from agents.memory.task_memory import TaskMemory
 
-__all__ = ["ShortTermMemory", "LongTermMemory"]
+__all__ = ["ShortTermMemory", "LongTermMemory", "TaskMemory"]
