@@ -55,6 +55,18 @@ class LongTermMemory:
             except Exception as e:
                 logger.warning("Failed to init memory collection: %s", e)
 
+    def _embed(self, text: str) -> List[float]:
+        """Embed text using the configured embedder.
+
+        Adapts LangChain Embeddings (embed_query / embed_documents)
+        to a uniform interface. Falls back to .embed() for custom embedders.
+        """
+        if hasattr(self.embedder, "embed_query"):
+            return self.embedder.embed_query(text)
+        if hasattr(self.embedder, "embed_documents"):
+            return self.embedder.embed_documents([text])[0]
+        return self.embedder.embed(text)
+
     def _judge_importance(self, content: str) -> Tuple[float, str]:
         if not self.llm:
             return 0.6, "fact"
@@ -109,11 +121,12 @@ class LongTermMemory:
 
         try:
             if self.store and self.embedder:
-                embedding = self.embedder.embed(content)
+                embedding = self._embed(content)
+                doc_id = "mem_{}".format(int(entry.timestamp * 1000))
                 self.store.upsert(
-                    ids=["mem_{}".format(int(entry.timestamp * 1000))],
+                    doc_id=doc_id,
+                    chunks=[content],
                     embeddings=[embedding],
-                    documents=[content],
                     metadatas=[entry.to_dict()],
                 )
                 logger.info("Memory stored (type=%s, importance=%.2f): %s",
@@ -131,19 +144,22 @@ class LongTermMemory:
             return []
 
         try:
-            query_embedding = self.embedder.embed(query)
+            query_embedding = self._embed(query)
             results = self.store.query(query_embedding, top_k=top_k * 2)
             now = time.time()
             scored = []
             for doc_id, text, score, meta in results:
+                # ChromaDB returns cosine distance (0=identical, 2=opposite).
+                # Convert to similarity (1.0=identical, 0.0=unrelated).
+                relevance = max(0.0, 1.0 - score)
                 mem_time = meta.get("timestamp", now)
                 age = now - mem_time
                 recency = 0.5 ** (age / RECENCY_HALFLIFE)
                 importance = meta.get("importance", 0.5)
-                combined = score * 0.5 + recency * 0.3 + importance * 0.2
+                combined = relevance * 0.5 + recency * 0.3 + importance * 0.2
                 scored.append({
                     "content": text, "score": combined,
-                    "relevance": score, "recency": recency,
+                    "relevance": relevance, "recency": recency,
                     "importance": importance,
                     "memory_type": meta.get("memory_type", "fact"),
                     "timestamp": mem_time,

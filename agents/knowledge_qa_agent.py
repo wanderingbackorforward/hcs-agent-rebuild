@@ -14,13 +14,15 @@ from typing import List, Optional
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
 
-from config.model_provider import create_chat_model
+from config.model_provider import create_chat_model, create_embedding_model
 from db.db_router import DatabaseRouter
 from db.repositories.session_repository import SessionRepository
 from services.knowledge_service import KnowledgeService
 from agents.knowledge_qa import KnowledgeRetriever, ResponseGenerator
 from agents.memory import ShortTermMemory, LongTermMemory
+from agents.memory.long_term_memory import MEMORY_COLLECTION
 from agents.context_manager import ContextManager, count_tokens
+from rag.ingestion.storage.chroma_store import ChromaStore
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +93,15 @@ class KnowledgeQAAgent:
 
         # U1: Layered memory.
         self.short_term_memory = ShortTermMemory(llm=self.llm)
-        self.long_term_memory = LongTermMemory(llm=self.llm)
+        try:
+            self.long_term_memory = LongTermMemory(
+                llm=self.llm,
+                embedder=create_embedding_model(),
+                store=ChromaStore(collection_name=MEMORY_COLLECTION),
+            )
+        except Exception as e:
+            logger.warning(f"Long-term memory init failed, degrading to no-op: {e}")
+            self.long_term_memory = LongTermMemory(llm=self.llm)
 
         # U2: Context manager.
         self.context_manager = ContextManager(

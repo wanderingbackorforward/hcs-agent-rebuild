@@ -62,7 +62,10 @@ class ContextManager:
 
             if total > available and self.short_term:
                 while len(self.short_term._messages) > 2 and total > available:
+                    prev_len = len(self.short_term._messages)
                     self.short_term._compress()
+                    if len(self.short_term._messages) >= prev_len:
+                        break  # can't compress further
                     conversation_context = self.short_term.get_context()
                     total = (count_tokens(system_prompt) + count_tokens(memory_context)
                              + count_tokens(conversation_context) + count_tokens(query))
