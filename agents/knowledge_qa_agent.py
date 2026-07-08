@@ -3,6 +3,9 @@
 Chat history is persisted to SQLite via SessionRepository (table user_sessions).
 In-process cache is a no-op now — persistence is the source of truth, so
 process restarts do not lose conversation context.
+
+U1+U2 upgrade: Integrated layered memory (short-term + long-term) and
+context manager for token budget control.
 """
 import logging
 import uuid
@@ -16,6 +19,8 @@ from db.db_router import DatabaseRouter
 from db.repositories.session_repository import SessionRepository
 from services.knowledge_service import KnowledgeService
 from agents.knowledge_qa import KnowledgeRetriever, ResponseGenerator
+from agents.memory import ShortTermMemory, LongTermMemory
+from agents.context_manager import ContextManager, count_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +62,20 @@ class _SQLiteBackedHistory(BaseChatMessageHistory):
 
 
 class KnowledgeQAAgent:
+    """Knowledge QA agent with layered memory and context management.
+
+    Memory architecture (U1):
+    - Short-term: recent N turns in context window, rolling summary for overflow.
+    - Long-term: vector DB storage with memory gating, RAG retrieval.
+
+    Context management (U2):
+    - Token counting via tiktoken.
+    - Overflow handling: compress -> truncate.
+    - Layered assembly: system + memory + summary + recent + query.
+    """
+
+    SYSTEM_PROMPT = "你是 HCS 测试辅助助手。请严格根据知识库内容和对话历史回答用户问题。"
+
     def __init__(self, session_id: str = None, db_router: Optional[DatabaseRouter] = None,
                  knowledge_service: Optional[KnowledgeService] = None):
         self.session_id = session_id or str(uuid.uuid4())
@@ -70,6 +89,28 @@ class KnowledgeQAAgent:
         self._unrelated_callback = None
         self.initialized = False
 
+        # U1: Layered memory.
+        self.short_term_memory = ShortTermMemory(llm=self.llm)
+        self.long_term_memory = LongTermMemory(llm=self.llm)
+
+        # U2: Context manager.
+        self.context_manager = ContextManager(
+            short_term_memory=self.short_term_memory,
+            long_term_memory=self.long_term_memory,
+        )
+
+        # Load existing history into short-term memory.
+        self._load_history_into_stm()
+
+    def _load_history_into_stm(self):
+        """Load existing chat history from SQLite into short-term memory."""
+        try:
+            records = self._session_repo.get_history(self.session_id)
+            for record in records:
+                self.short_term_memory.add_message(record["role"], record["content"])
+        except Exception as e:
+            logger.warning(f"Failed to load history into STM: {e}")
+
     async def ensure_initialized(self):
         if not self.initialized:
             self.knowledge_service.initialize()
@@ -81,10 +122,56 @@ class KnowledgeQAAgent:
     async def process_stream(self, user_query: str, session_id: str = None):
         await self.ensure_initialized()
         sid = session_id or self.session_id
+
+        # U2: Build context with token budget management.
         results = self.retriever.retrieve(user_query, top_k=5)
-        answer = await self.response_generator.generate(user_query, results)
+
+        # U1: Store user query in short-term memory.
+        self.short_term_memory.add_message("user", user_query)
+
+        # U2: Assemble context (includes long-term memory retrieval + STM summary).
+        context = self.context_manager.build_prompt(
+            self.SYSTEM_PROMPT, user_query
+        )
+
+        # Build RAG context from retrieved docs.
+        rag_context = ""
+        for i, (doc_id, text, score, meta) in enumerate(results[:5], 1):
+            title = meta.get("title", doc_id)
+            rag_context += f"[{i}] 来源：{title}\n{text}\n\n"
+
+        # Generate answer with full context.
+        prompt = f"""{context}
+
+## 知识库检索结果
+{rag_context}
+
+## 答案（简洁、准确，使用中文）："""
+
+        answer = ""
+        try:
+            from langchain_core.messages import HumanMessage
+            async for chunk in self.llm.astream([HumanMessage(content=prompt)]):
+                answer += chunk.content
+            answer = answer.strip()
+        except Exception as e:
+            logger.warning(f"LLM answer generation failed: {e}")
+            answer = "根据知识库检索结果：\n" + "\n".join(
+                f"- {meta.get('title', doc_id)}: {text[:200]}..."
+                for doc_id, text, score, meta in results[:3]
+            )
+
+        # U1: Store AI response in short-term memory.
+        self.short_term_memory.add_message("ai", answer)
+
+        # U1: Memory gating - decide if this conversation is worth persisting.
+        conversation_text = f"用户问: {user_query}\nAI答: {answer[:200]}"
+        self.long_term_memory.store_memory(conversation_text)
+
+        # Persist to SQLite.
         self.chat_history.add_user_message(user_query)
         self.chat_history.add_ai_message(answer)
+
         yield answer
 
     async def process(self, question: str, session_id: str = None) -> str:
@@ -95,3 +182,4 @@ class KnowledgeQAAgent:
 
     def reset(self):
         self.chat_history.clear()
+        self.short_term_memory.clear()
