@@ -45,7 +45,7 @@ def knowledge_service(monkeypatch):
 
 
 @requires_embedding
-def test_query_knowledge_hub_happy_path(knowledge_service):
+def test_query_knowledge_hub_happy_path(embedding_works, knowledge_service):
     from mcp_server.tools import query_knowledge_hub
     import asyncio
     res = asyncio.run(
@@ -59,7 +59,7 @@ def test_query_knowledge_hub_happy_path(knowledge_service):
 
 
 @requires_embedding
-def test_query_knowledge_hub_no_results(knowledge_service):
+def test_query_knowledge_hub_no_results(embedding_works, knowledge_service):
     """Unknown term still returns a non-error result, not an exception."""
     from mcp_server.tools import query_knowledge_hub
     import asyncio

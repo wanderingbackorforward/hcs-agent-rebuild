@@ -59,9 +59,13 @@ def knowledge_service():
     os.unlink(path)
 
 
-@pytest.mark.skipif(not _has_api_key(), reason="LLM_API_KEY not set")
-def test_retrieval_hit_rate_at_10(knowledge_service):
-    """Verify Hybrid Search top-10 hit rate >= 85%."""
+def test_retrieval_hit_rate_at_10(embedding_works, knowledge_service):
+    """Verify Hybrid Search top-10 hit rate >= 85%.
+
+    Depends on the ``embedding_works`` session fixture, which live-probes the
+    embedding endpoint and skips cleanly when it's unavailable (no key /
+    unsupported model) rather than failing on an environment precondition.
+    """
     hits = 0
     for query, expected_doc_id in RETRIEVAL_PAIRS:
         results = knowledge_service.search(query, top_k=10)
