@@ -7,6 +7,7 @@ persisting. Retrieval uses recency decay + semantic relevance weighted scoring."
 import json
 import logging
 import time
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from langchain_core.messages import HumanMessage
 
@@ -16,6 +17,13 @@ DEFAULT_TTL = 30 * 24 * 3600
 RECENCY_HALFLIFE = 7 * 24 * 3600
 IMPORTANCE_THRESHOLD = 0.5
 CONFIDENCE_THRESHOLD = 0.15  # combined score below this -> not injected
+
+_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
+_LTM_PROMPT_FILE = "ltm_judge_and_extract_v1.txt"
+
+
+def _load_prompt_template(name: str) -> str:
+    return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
 class MemoryEntry:
@@ -86,19 +94,7 @@ class LongTermMemory:
         if not self.llm:
             return 0.6, "fact", {}
 
-        prompt = (
-            '分析以下信息，判断是否值得长期记住，并提取结构化信息。\n'
-            '评分标准：\n'
-            '- 0.9-1.0：用户偏好、关键决策、重要事实（必须记住）\n'
-            '- 0.5-0.8：可能有用的上下文（可以记住）\n'
-            '- 0.0-0.4：寒暄、重复信息、无关内容（不需要记住）\n\n'
-            '分类：fact / preference / decision / noise\n'
-            '实体抽取：提取关键实体（如产品名、技术、人名、环境名等）\n\n'
-            '## 信息内容\n{}\n\n'
-            '## 输出格式（JSON）\n'
-            '{{"importance": 0.X, "type": "fact|preference|decision|noise", '
-            '"entities": ["实体1", "实体2"]}}'
-        ).format(content)
+        prompt = _load_prompt_template(_LTM_PROMPT_FILE).format(content=content)
 
         try:
             # Use sync invoke directly — works in both sync and async contexts.

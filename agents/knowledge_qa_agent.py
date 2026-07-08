@@ -79,7 +79,8 @@ class KnowledgeQAAgent:
     SYSTEM_PROMPT = "你是 HCS 测试辅助助手。请严格根据知识库内容和对话历史回答用户问题。"
 
     def __init__(self, session_id: str = None, db_router: Optional[DatabaseRouter] = None,
-                 knowledge_service: Optional[KnowledgeService] = None):
+                 knowledge_service: Optional[KnowledgeService] = None,
+                 memory_service=None):
         self.session_id = session_id or str(uuid.uuid4())
         self.llm = create_chat_model(temperature=0)
         self.knowledge_service = knowledge_service or KnowledgeService(db_router=db_router)
@@ -91,22 +92,25 @@ class KnowledgeQAAgent:
         self._unrelated_callback = None
         self.initialized = False
 
-        # U1: Layered memory.
-        self.short_term_memory = ShortTermMemory(llm=self.llm)
-        try:
-            self.long_term_memory = LongTermMemory(
-                llm=self.llm,
-                embedder=create_embedding_model(),
-                store=ChromaStore(collection_name=MEMORY_COLLECTION),
+        # U4: Use shared MemoryService if provided, else create standalone.
+        if memory_service:
+            self.short_term_memory = memory_service.short_term
+            self.long_term_memory = memory_service.long_term
+            self.task_memory = memory_service.task_memory
+        else:
+            self.short_term_memory = ShortTermMemory(llm=self.llm)
+            try:
+                self.long_term_memory = LongTermMemory(
+                    llm=self.llm,
+                    embedder=create_embedding_model(),
+                    store=ChromaStore(collection_name=MEMORY_COLLECTION),
+                )
+            except Exception as e:
+                logger.warning(f"Long-term memory init failed, degrading to no-op: {e}")
+                self.long_term_memory = LongTermMemory(llm=self.llm)
+            self.task_memory = TaskMemory(
+                session_repo=self._session_repo, session_id=self.session_id,
             )
-        except Exception as e:
-            logger.warning(f"Long-term memory init failed, degrading to no-op: {e}")
-            self.long_term_memory = LongTermMemory(llm=self.llm)
-
-        # U3: Task memory - structured task state and intermediate results.
-        self.task_memory = TaskMemory(
-            session_repo=self._session_repo, session_id=self.session_id,
-        )
 
         # U2: Context manager.
         self.context_manager = ContextManager(

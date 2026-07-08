@@ -29,6 +29,7 @@ python -m mcp_server.server          # MCP server (stdio)
 - MCP 工具错误统一用 `mcp_server/errors.py` 的 `MCPError` + `format_error()`,不直接 `f"Error: {e}"`
 - API key 走 `.env` + gitignore,不要硬编码也不要进配置
 - 输入校验在 `web/routes.py::ChatRequest` 已经有 Pydantic 校验,新加的字段必须接 `field_validator`
+- **面试驱动升级**: 改代码前必须先在 `d:\mine\myprojects\interview-prep\UPGRADE_LOG.md` 追加计划记录(AOF 原则)
 
 ## 数据 / 状态
 
@@ -37,8 +38,27 @@ python -m mcp_server.server          # MCP server (stdio)
 - Chunker: zh 默认, 600 字符, 100 overlap,可通过 `CHUNKER_LANG` / `CHUNKER_SIZE` / `CHUNKER_OVERLAP` 覆盖
 - Reranker: NoOp 默认;`CROSS_ENCODER_MODEL` 切真实 cross-encoder
 - Retriever: Hybrid (Dense HNSW + BM25 + RRF)
-- Session: `chats_by_session_id` 字典,**进程内存**,重启即丢
+- Session: `chats_by_session_id` 字典 + SQLite持久化(`db/repositories/session_repository.py`),重启不丢
 - Auth: `API_KEYS` 设为空=dev 模式(无认证);生产必须填
+
+
+## 新增模块(面试驱动升级, 2026-07-08)
+
+- `agents/memory/` — 分层记忆(三层 + 统一服务):
+  - `short_term_memory.py` — context window + rolling summary(超出窗口压缩)
+  - `long_term_memory.py` — ChromaDB 向量存储 + memory gating(LLM判断重要性) + 3阶段检索(bi-encoder召回→cross-encoder rerank→置信度过滤) + 结构化实体抽取
+  - `task_memory.py` — 结构化任务态 + 中间结果(存 extracted_fields["_task_memory"],无需迁移)
+  - `memory_service.py` — 统一 facade,按 session_id 隔离,跨 agent 共享(注入 chat_handler)
+  - Prompt 文件: `prompts/stm_rolling_summary_v1.txt` + `prompts/ltm_judge_and_extract_v1.txt`
+- `agents/context_manager.py` — 上下文管理: tiktoken计数 + 分层组装(system+memory+task+conversation) + 溢出压缩策略(丢task→压STM→截断)
+- `agents/knowledge_qa/react_loop.py` — ReAct循环: Thought->Action->Observation
+- `cache/` — 三层Agent缓存: LLM结果缓存 + 工具结果缓存 + 语义缓存
+- `code_review/` — AI Code Review: 分层验证(确定性+LLM+置信度) + 分级报告
+- `mcp_server/sse_server.py` — MCP SSE transport: stdio+SSE双模式
+- `tests/test_memory.py` — 33个测试覆盖 STM/LTM/TaskMemory/ContextManager(Fake组件,无API调用)
+- `tests/test_agent_eval.py` — Agent评测: 任务完成率/检索精度/响应质量
+
+完整升级日志: `d:\mine\myprojects\interview-prep\UPGRADE_LOG.md`
 
 ## 已知坑
 

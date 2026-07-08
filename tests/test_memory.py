@@ -1,10 +1,11 @@
-"""Tests for layered memory (short-term, long-term, task, context manager).
+"""Tests for layered memory (short-term, long-term, task, context manager, service).
 
 Uses FakeEmbedder + FakeStore + FakeLLM — no real API calls.
 """
 from agents.memory.short_term_memory import ShortTermMemory
 from agents.memory.long_term_memory import LongTermMemory
 from agents.memory.task_memory import TaskMemory
+from agents.memory.memory_service import MemoryService
 from agents.context_manager import ContextManager, count_tokens
 
 
@@ -437,3 +438,111 @@ def test_ltm_no_llm_returns_empty_extraction():
     assert importance == 0.6
     assert mem_type == "fact"
     assert extracted == {}
+
+
+# --- MemoryService (unified facade) ---
+
+def test_ms_creates_all_three_layers():
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ms = MemoryService(
+        session_id="s1", llm=FakeLLM(),
+        embedder=embedder, store=store,
+    )
+    assert ms.short_term is not None
+    assert ms.long_term is not None
+    assert ms.task_memory is not None
+    assert ms.session_id == "s1"
+
+
+def test_ms_layers_are_shared_instances():
+    """MemoryService should hold single instances, not create new ones."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ms = MemoryService(
+        session_id="s1", llm=FakeLLM(),
+        embedder=embedder, store=store,
+    )
+    stm_before = ms.short_term
+    ltm_before = ms.long_term
+    tm_before = ms.task_memory
+    # Access again — should be same objects
+    assert ms.short_term is stm_before
+    assert ms.long_term is ltm_before
+    assert ms.task_memory is tm_before
+
+
+def test_ms_reset_all_clears_stm_and_task():
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ms = MemoryService(
+        session_id="s1", llm=FakeLLM(),
+        embedder=embedder, store=store,
+    )
+    ms.short_term.add_message("user", "测试")
+    ms.task_memory.set_task("knowledge_qa")
+    ms.reset_all()
+    assert ms.short_term.messages == []
+    assert ms.task_memory.task_type == "idle"
+
+
+def test_ms_reset_all_preserves_ltm():
+    """Long-term memory should NOT be cleared on reset (cross-session)."""
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ms = MemoryService(
+        session_id="s1", llm=None,
+        embedder=embedder, store=store,
+    )
+    ms.long_term._judge_and_extract = lambda c: (0.9, "preference", {})
+    ms.long_term.store_memory("重要信息")
+    ms.reset_all()
+    results = ms.long_term.retrieve("重要信息")
+    assert len(results) >= 1
+
+
+def test_ms_reset_task_only_clears_task_memory():
+    embedder = FakeEmbedder()
+    store = FakeStore()
+    ms = MemoryService(
+        session_id="s1", llm=FakeLLM(),
+        embedder=embedder, store=store,
+    )
+    ms.short_term.add_message("user", "对话内容")
+    ms.task_memory.set_task("environment_matching")
+    ms.reset_task()
+    assert ms.task_memory.task_type == "idle"
+    # STM should be preserved
+    assert len(ms.short_term.messages) > 0
+
+
+def test_ms_session_isolation():
+    """Different sessions should have different MemoryService instances."""
+    embedder1 = FakeEmbedder()
+    store1 = FakeStore()
+    ms1 = MemoryService(session_id="s1", llm=FakeLLM(), embedder=embedder1, store=store1)
+    embedder2 = FakeEmbedder()
+    store2 = FakeStore()
+    ms2 = MemoryService(session_id="s2", llm=FakeLLM(), embedder=embedder2, store=store2)
+    ms1.short_term.add_message("user", "session1消息")
+    assert len(ms1.short_term.messages) == 1
+    assert len(ms2.short_term.messages) == 0
+
+
+# --- Prompt externalization ---
+
+def test_stm_prompt_loaded_from_file():
+    """STM should load prompt from prompts/stm_rolling_summary_v1.txt."""
+    from agents.memory.short_term_memory import _load_prompt_template, _STM_PROMPT_FILE
+    template = _load_prompt_template(_STM_PROMPT_FILE)
+    assert "{transcript}" in template
+    assert "{existing}" in template
+
+
+def test_ltm_prompt_loaded_from_file():
+    """LTM should load prompt from prompts/ltm_judge_and_extract_v1.txt."""
+    from agents.memory.long_term_memory import _load_prompt_template, _LTM_PROMPT_FILE
+    template = _load_prompt_template(_LTM_PROMPT_FILE)
+    assert "{content}" in template
+    assert "importance" in template
+    assert "entities" in template

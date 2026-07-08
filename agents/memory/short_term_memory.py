@@ -5,12 +5,20 @@ context window overflows, older turns are LLM-summarized into a compact
 paragraph, keeping token budget under control while preserving key info."
 """
 import logging
+from pathlib import Path
 from typing import List
 from langchain_core.messages import HumanMessage
 
 logger = logging.getLogger(__name__)
 DEFAULT_MAX_TURNS = 6
 KEEP_RECENT = 4
+
+_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
+_STM_PROMPT_FILE = "stm_rolling_summary_v1.txt"
+
+
+def _load_prompt_template(name: str) -> str:
+    return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
 class ShortTermMemory:
@@ -48,11 +56,9 @@ class ShortTermMemory:
         )
 
         existing = "\nPrevious summary:\n{}\n".format(self._summary) if self._summary else ""
-        prompt = (
-            "请将以下对话历史压缩为简洁摘要，保留关键信息"
-            "（用户意图、已确认的事实、重要决策）。\n{}\n"
-            "## 需要压缩的对话\n{}\n## 摘要（150字以内，中文）："
-        ).format(existing, transcript)
+        prompt = _load_prompt_template(_STM_PROMPT_FILE).format(
+            existing=existing, transcript=transcript,
+        )
 
         if self.llm:
             try:

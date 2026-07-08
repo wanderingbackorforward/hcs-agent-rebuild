@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 class EnvironmentMatchingAgent:
-    def __init__(self, session_id: str = None, db_router: DatabaseRouter = None):
+    def __init__(self, session_id: str = None, db_router: DatabaseRouter = None,
+                 memory_service=None):
         self.session_id = session_id or str(uuid.uuid4())
         self.db = db_router or DatabaseRouter()
         self.llm = create_chat_model(temperature=0)
@@ -42,10 +43,18 @@ class EnvironmentMatchingAgent:
         self.chat_history = self._get_chat_history(self.session_id)
         self.history_by_session = {}
 
-        # U3: Task memory - track env-matching progress and results.
-        self.task_memory = TaskMemory(
-            session_repo=self.db.session, session_id=self.session_id,
-        )
+        # U4: Use shared MemoryService if provided, else create standalone.
+        if memory_service:
+            self.short_term_memory = memory_service.short_term
+            self.long_term_memory = memory_service.long_term
+            self.task_memory = memory_service.task_memory
+        else:
+            from agents.memory import ShortTermMemory, LongTermMemory
+            self.short_term_memory = ShortTermMemory(llm=self.llm)
+            self.long_term_memory = LongTermMemory(llm=self.llm)
+            self.task_memory = TaskMemory(
+                session_repo=self.db.session, session_id=self.session_id,
+            )
 
     def _get_chat_history(self, sid: str) -> InMemoryChatMessageHistory:
         if sid not in self.chats_by_session_id:
