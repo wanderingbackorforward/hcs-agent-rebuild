@@ -2,6 +2,7 @@
 from typing import AsyncGenerator
 
 from config.constants import StateEnum
+from config.sse_protocol import SSEEvent
 
 
 class AgentRouter:
@@ -13,10 +14,12 @@ class AgentRouter:
     async def route(self, intent_type: str, user_input: str, session_id: str = None) -> AsyncGenerator[str, None]:
         if intent_type == "environment_match":
             self.state_manager.set_state(StateEnum.ENVIRONMENT)
+            yield SSEEvent.status("routing", "正在匹配测试环境...")
             async for token in self.environment_agent.process_stream(user_input, session_id=session_id):
                 yield token
         elif intent_type == "knowledge_qa":
             self.state_manager.set_state(StateEnum.KNOWLEDGE)
+            yield SSEEvent.status("routing", "正在检索知识库...")
             async for token in self.knowledge_agent.process_stream(user_input, session_id=session_id):
                 yield token
         else:

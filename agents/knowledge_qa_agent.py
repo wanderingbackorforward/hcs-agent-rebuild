@@ -23,6 +23,7 @@ from agents.knowledge_qa import KnowledgeRetriever, ResponseGenerator
 from agents.memory import ShortTermMemory, LongTermMemory, TaskMemory
 from agents.memory.long_term_memory import MEMORY_COLLECTION
 from agents.context_manager import ContextManager, count_tokens
+from config.sse_protocol import SSEEvent
 from cache.registry import get_semantic_cache
 from rag.ingestion.storage.chroma_store import ChromaStore
 
@@ -165,6 +166,7 @@ class KnowledgeQAAgent:
             return
 
         # U2: Build context with token budget management.
+        yield SSEEvent.status("retrieving", "正在检索知识库...")
         results = self.retriever.retrieve(user_query, top_k=app_settings.retrieval_top_k)
 
         # U3: Store retrieval results as intermediate results.
@@ -200,6 +202,7 @@ class KnowledgeQAAgent:
 ## 答案（简洁、准确，使用中文）："""
 
         answer = ""
+        yield SSEEvent.status("generating", "正在生成回答...")
         try:
             from langchain_core.messages import HumanMessage
             async for chunk in self.llm.astream([HumanMessage(content=prompt)]):

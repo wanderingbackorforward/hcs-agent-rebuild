@@ -26,6 +26,7 @@ from config.constants import (
 from agents.context_lock import ContextLock, load_lock, save_lock, clear_lock
 from agents.task_classification.json_utils import parse_classification_json
 from agents.task_classification.semantic_checker import SemanticChecker
+from config.sse_protocol import SSEEvent
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class ClassificationProcessor:
         # L1: switch-word fast intercept (0 cost).
         if self._is_switch(user_input):
             clear_lock(self.repo, sid)
+            yield SSEEvent.status("classifying", "检测到话题切换，重新理解需求...")
             async for t in self._full_classify_route(user_input, sid, lock):
                 yield t
             return
@@ -71,6 +73,7 @@ class ClassificationProcessor:
                         message="reuse locked intent={}".format(lock.intent),
                         data={"intent": lock.intent, "confidence": score})
             save_lock(self.repo, sid, lock.intent, lock.params)  # refresh TTL
+            yield SSEEvent.status("continuing", "延续上轮对话，正在处理...")
             async for t in self.router.route(lock.intent, user_input, session_id=sid):
                 yield t
             return
@@ -84,6 +87,7 @@ class ClassificationProcessor:
 
     async def _full_classify_route(self, user_input, sid, lock):
         """Full LLM classification, update/overwrite lock, route."""
+        yield SSEEvent.status("classifying", "正在理解您的需求...")
         raw = ""
         history = self._load_history(sid)
         async for token in self.classifier.classify_stream(user_input, history=history):

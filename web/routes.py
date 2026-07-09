@@ -83,37 +83,57 @@ async def read_root(request: Request):
 
 @router.post(
     "/chat/stream",
-    summary="流式聊天",
+    summary="流式聊天 (SSE)",
     dependencies=[Depends(require_api_key), Depends(rate_limit)],
 )
-async def chat_stream_endpoint(chat: ChatRequest):
-    """Handle streaming chat requests."""
+async def chat_stream_endpoint(chat: ChatRequest, request: Request):
+    """SSE streaming endpoint — emits structured events."""
     msg = _validate_chat(chat)
     sid = chat.session_id or str(uuid.uuid4())
-    # Propagate session_id into trace context for downstream audit.
     set_trace_context(session_id=sid)
-    audit_event(
-        layer="bff",
-        event_type="chat_request",
-        message="streaming chat",
-        data={"session_id": sid, "message_length": len(msg)},
-    )
+    audit_event(layer="bff", event_type="chat_request",
+                message="sse streaming chat",
+                data={"session_id": sid, "message_length": len(msg)})
 
-    async def token_generator():
+    # Replay missed events if client sends Last-Event-ID header.
+    from api.sse_buffer import get_sse_buffer
+    from config.sse_protocol import SSEEvent, format_sse_stream
+    buf = get_sse_buffer()
+    last_seq = 0
+    leid = request.headers.get("last-event-id", "")
+    if leid.isdigit():
+        last_seq = int(leid)
+
+    async def event_generator():
+        # Replay buffered events on reconnect.
+        if last_seq:
+            for e in buf.replay(sid, last_seq):
+                yield e.to_sse()
+        # Stream new events from the agent pipeline.
         try:
-            async for token in process_user_input_stream(msg, session_id=sid):
-                yield token
+            async for chunk in format_sse_stream(
+                process_user_input_stream(msg, session_id=sid),
+                session_id=sid, start_seq=last_seq,
+            ):
+                yield chunk
+            yield SSEEvent.done(session_id=sid).to_sse()
         except Exception as e:
-            audit_event(
-                layer="bff",
-                event_type="error",
-                message=f"stream error: {type(e).__name__}",
-                data={"error": str(e)[:200]},
-                level=40,
-            )
-            yield f"[error] {type(e).__name__}"
+            audit_event(layer="bff", event_type="error",
+                        message=f"stream error: {type(e).__name__}",
+                        data={"error": str(e)[:200]}, level=40)
+            yield SSEEvent.error(
+                type(e).__name__, "处理异常，请重试", retryable=True,
+            ).to_sse()
 
-    return StreamingResponse(token_generator(), media_type="text/plain")
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(
+        event_generator(), media_type="text/event-stream",
+        headers=headers,
+    )
 
 
 @router.post(
@@ -122,23 +142,18 @@ async def chat_stream_endpoint(chat: ChatRequest):
     dependencies=[Depends(require_api_key), Depends(rate_limit)],
 )
 async def chat_endpoint(chat: ChatRequest):
-    """Non-streaming chat endpoint."""
+    """Non-streaming chat endpoint (accumulates SSE stream to text)."""
+    from config.sse_protocol import collect_text
     msg = _validate_chat(chat)
     sid = chat.session_id or str(uuid.uuid4())
     set_trace_context(session_id=sid)
-    audit_event(
-        layer="bff",
-        event_type="chat_request",
-        message="non-streaming chat",
-        data={"session_id": sid, "message_length": len(msg)},
+    audit_event(layer="bff", event_type="chat_request",
+                message="non-streaming chat",
+                data={"session_id": sid, "message_length": len(msg)})
+    result = await collect_text(
+        process_user_input_stream(msg, session_id=sid)
     )
-    result = ""
-    async for token in process_user_input_stream(msg, session_id=sid):
-        result += token
-    audit_event(
-        layer="bff",
-        event_type="chat_response",
-        message="non-streaming chat done",
-        data={"session_id": sid, "reply_length": len(result)},
-    )
+    audit_event(layer="bff", event_type="chat_response",
+                message="non-streaming chat done",
+                data={"session_id": sid, "reply_length": len(result)})
     return {"reply": result, "session_id": sid}

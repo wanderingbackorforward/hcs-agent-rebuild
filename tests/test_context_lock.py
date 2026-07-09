@@ -176,7 +176,8 @@ def test_single_intent_kb_question_not_conflict(tmp_path):
 
 
 async def _collect(gen):
+    from config.sse_protocol import SSEEvent
     out = ""
     async for t in gen:
-        out += t
+        out += t.text if isinstance(t, SSEEvent) else t
     return out
