@@ -257,3 +257,26 @@
 5. "缓存机制？业界主流？" → 三层缓存：LLM结果缓存+工具结果缓存+语义缓存 → `cache/`
 6. "MCP Transport层？" → stdio+SSE双模式，环境变量切换 → `mcp_server/sse_server.py`
 7. "AI Code Review怎么做？" → 分层验证(确定性+LLM+置信度)+分级报告(Error/Warning/Info)+agent loop → `code_review/`
+
+---
+
+### 2026-07-09 UX 升级计划：延迟感知 + 决策可解释 + 任务可中断 + 错误恢复
+
+**背景**：面试考点 Agent 用户体验四大维度，当前项目全部缺失或不足。详细方案见 `docs/agent-ux-upgrade-plan.md`。
+
+**四个 feature 分支**（按依赖顺序开发）：
+
+| # | 分支 | 考点 | 现状 | 目标 |
+|---|------|------|------|------|
+| U8 | `feature/sse-streaming` | 延迟感知 | `/chat/stream` 是 text/plain，前端用非流式 `/chat` | SSE 协议，结构化事件（status/token/decision/error/done），前端 EventSource |
+| U9 | `feature/decision-explainability` | 决策可解释 | 有 audit_event 日志但不暴露给用户 | decision 事件推送到前端，折叠面板展示路由原因+置信度 |
+| U10 | `feature/task-interruptible` | 任务可中断 | 无任何中断机制 | cancel 端点 + CancelledError 处理 + checkpoint 续传 |
+| U11 | `feature/error-recovery` | 错误恢复 | 有异常处理但无用户建议/重试 | 错误分类 + 建议 + 一键重试按钮 |
+
+**依赖关系**：U8 是基础设施 → U9/U10 依赖 U8 → U11 依赖 U8+U10
+
+**自吹话术**：
+1. "流式输出怎么做？" → SSE 协议，5 种事件类型（status/token/decision/error/done），seq 序列号 + Last-Event-ID 断线续传
+2. "决策可解释性？" → decision 事件推送路由原因和置信度，折叠面板展示，mask_sensitive 过滤敏感信息
+3. "任务可以中断吗？" → asyncio.CancelledError 处理 + checkpoint 断点续传 + TaskManager 状态管理
+4. "出错怎么办？" → 错误分类（可重试/不可重试）+ 用户建议 + 一键重试（max 3 次）
