@@ -27,6 +27,7 @@ from agents.context_lock import ContextLock, load_lock, save_lock, clear_lock
 from agents.task_classification.json_utils import parse_classification_json
 from agents.task_classification.semantic_checker import SemanticChecker
 from config.sse_protocol import SSEEvent
+from config.decision_explainer import build_decision, agent_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class ClassificationProcessor:
         # L1: switch-word fast intercept (0 cost).
         if self._is_switch(user_input):
             clear_lock(self.repo, sid)
+            yield SSEEvent.decision(**build_decision("switch"))
             yield SSEEvent.status("classifying", "检测到话题切换，重新理解需求...")
             async for t in self._full_classify_route(user_input, sid, lock):
                 yield t
@@ -64,6 +66,8 @@ class ClassificationProcessor:
                 audit_event(layer="orchestrator", event_type="low_confidence_clarify",
                             message="issue={} score={}".format(issue, score),
                             data={"issue": issue, "score": score, "input": user_input[:50]})
+                path = "clarify_multi" if issue == "multi_intent" else "clarify_vague"
+                yield SSEEvent.decision(**build_decision(path, score=score))
                 yield question
                 return
 
@@ -73,6 +77,10 @@ class ClassificationProcessor:
                         message="reuse locked intent={}".format(lock.intent),
                         data={"intent": lock.intent, "confidence": score})
             save_lock(self.repo, sid, lock.intent, lock.params)  # refresh TTL
+            yield SSEEvent.decision(**build_decision(
+                "lock_hit", intent_type=lock.intent,
+                context_lock_status="active",
+            ))
             yield SSEEvent.status("continuing", "延续上轮对话，正在处理...")
             async for t in self.router.route(lock.intent, user_input, session_id=sid):
                 yield t
@@ -107,8 +115,16 @@ class ClassificationProcessor:
                         message="full-classify low confidence {:.2f}".format(confidence),
                         data={"intent_type": intent_type, "confidence": confidence,
                               "input": user_input[:50]})
+            yield SSEEvent.decision(**build_decision(
+                "low_confidence", intent_type=intent_type, confidence=confidence,
+            ))
             yield "我不太确定您的需求。您是想查询/匹配测试环境，还是询问技术文档和规范方面的问题？请稍作补充。"
             return
+        # Emit classified decision event for user-facing explainability.
+        yield SSEEvent.decision(**build_decision(
+            "classified", intent_type=intent_type, confidence=confidence,
+            agent=agent_display_name(intent_type),
+        ))
         # Auto-overwrite: new intent != locked intent -> clear old params.
         if lock.intent and intent_type != lock.intent:
             clear_lock(self.repo, sid)

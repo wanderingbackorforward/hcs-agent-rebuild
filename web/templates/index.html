@@ -71,6 +71,46 @@
         button:hover { background: #1557b0; }
         button:disabled { background: #aaa; cursor: not-allowed; }
         .hint { color: #666; font-size: 12px; margin-top: 8px; }
+        .decision-panel {
+            margin-top: 6px;
+            border-left: 3px solid #1a73e8;
+            background: #f8f9fa;
+            border-radius: 0 4px 4px 0;
+            font-size: 12px;
+        }
+        .decision-toggle {
+            padding: 4px 10px;
+            cursor: pointer;
+            color: #555;
+            user-select: none;
+        }
+        .decision-toggle::before { content: '▸ '; font-size: 10px; }
+        .decision-toggle.open::before { content: '▾ '; }
+        .decision-content {
+            display: none;
+            padding: 6px 10px 8px;
+            color: #444;
+        }
+        .decision-content.open { display: block; }
+        .confidence-bar {
+            display: inline-block;
+            width: 60px;
+            height: 6px;
+            background: #ddd;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: middle;
+            position: relative;
+        }
+        .confidence-bar::after {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; height: 100%;
+            border-radius: 3px;
+            width: var(--conf, 0%);
+            background: #1a73e8;
+        }
+        .confidence-bar.low::after { background: #e8a730; }
     </style>
 </head>
 <body>
@@ -214,6 +254,9 @@
                     window._currentAiDiv.innerHTML += (data.content || '').replace(/\n/g, '<br>');
                     chatBox.scrollTop = chatBox.scrollHeight;
                     break;
+                case 'decision':
+                    window._currentDecision = data;
+                    break;
                 case 'error':
                     setStatus(null);
                     showError(data.message || '未知错误', data.suggestion || '', data.retryable || false);
@@ -225,11 +268,56 @@
                         sessionId = data.session_id;
                         localStorage.setItem('hcs_session_id', sessionId);
                     }
+                    if (window._currentDecision && window._currentAiDiv) {
+                        appendDecisionPanel(window._currentAiDiv, window._currentDecision);
+                    }
                     window._currentAiDiv = null;
+                    window._currentDecision = null;
                     break;
                 default:
                     break;
             }
+        }
+
+        function appendDecisionPanel(aiDiv, decision) {
+            const panel = document.createElement('div');
+            panel.className = 'decision-panel';
+
+            const toggle = document.createElement('div');
+            toggle.className = 'decision-toggle';
+            toggle.textContent = '为什么这样回答？';
+            const content = document.createElement('div');
+            content.className = 'decision-content';
+
+            let html = '';
+            if (decision.explanation) {
+                html += '<div>' + decision.explanation + '</div>';
+            }
+            if (decision.intent_type) {
+                html += '<div style="margin-top:4px;">意图：<strong>' + decision.intent_type + '</strong></div>';
+            }
+            if (decision.agent) {
+                html += '<div>Agent：<strong>' + decision.agent + '</strong></div>';
+            }
+            if (typeof decision.confidence === 'number') {
+                const pct = Math.round(decision.confidence * 100);
+                const lowCls = pct < 70 ? ' low' : '';
+                html += '<div style="margin-top:4px;">置信度：' + pct + '%' +
+                    '<span class="confidence-bar' + lowCls + '" style="--conf:' + pct + '%"></span></div>';
+            }
+            if (decision.context_lock_status) {
+                html += '<div>上下文锁：' + decision.context_lock_status + '</div>';
+            }
+            content.innerHTML = html;
+
+            toggle.onclick = () => {
+                toggle.classList.toggle('open');
+                content.classList.toggle('open');
+            };
+            panel.appendChild(toggle);
+            panel.appendChild(content);
+            aiDiv.appendChild(panel);
+            chatBox.scrollTop = chatBox.scrollHeight;
         }
 
         function cancelRequest() {
