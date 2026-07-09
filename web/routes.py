@@ -95,9 +95,14 @@ async def chat_stream_endpoint(chat: ChatRequest, request: Request):
                 message="sse streaming chat",
                 data={"session_id": sid, "message_length": len(msg)})
 
-    # Replay missed events if client sends Last-Event-ID header.
+    # Task tracking for cooperative cancellation.
+    from api.task_manager import get_task_manager, make_task_id
     from api.sse_buffer import get_sse_buffer
     from config.sse_protocol import SSEEvent, format_sse_stream
+    tm = get_task_manager()
+    task_id = make_task_id(sid)
+    tm.register(task_id)
+
     buf = get_sse_buffer()
     last_seq = 0
     leid = request.headers.get("last-event-id", "")
@@ -105,18 +110,22 @@ async def chat_stream_endpoint(chat: ChatRequest, request: Request):
         last_seq = int(leid)
 
     async def event_generator():
-        # Replay buffered events on reconnect.
-        if last_seq:
-            for e in buf.replay(sid, last_seq):
-                yield e.to_sse()
-        # Stream new events from the agent pipeline.
         try:
             async for chunk in format_sse_stream(
-                process_user_input_stream(msg, session_id=sid),
+                process_user_input_stream(
+                    msg, session_id=sid, task_id=task_id,
+                ),
                 session_id=sid, start_seq=last_seq,
             ):
+                if tm.is_cancelled(task_id):
+                    yield SSEEvent.done(
+                        session_id=sid, task_id=task_id, cancelled=True,
+                    ).to_sse()
+                    return
                 yield chunk
-            yield SSEEvent.done(session_id=sid).to_sse()
+            yield SSEEvent.done(
+                session_id=sid, task_id=task_id,
+            ).to_sse()
         except Exception as e:
             audit_event(layer="bff", event_type="error",
                         message=f"stream error: {type(e).__name__}",
@@ -124,16 +133,54 @@ async def chat_stream_endpoint(chat: ChatRequest, request: Request):
             yield SSEEvent.error(
                 type(e).__name__, "处理异常，请重试", retryable=True,
             ).to_sse()
+        finally:
+            tm.cleanup(task_id)
 
     headers = {
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
         "Connection": "keep-alive",
+        "X-Task-Id": task_id,
     }
     return StreamingResponse(
         event_generator(), media_type="text/event-stream",
         headers=headers,
     )
+
+
+class CancelRequest(BaseModel):
+    task_id: Annotated[str | None, Field(default=None, max_length=MAX_SESSION_ID_LENGTH)]
+    session_id: Annotated[str | None, Field(default=None, max_length=MAX_SESSION_ID_LENGTH)]
+
+    @field_validator("task_id", "session_id")
+    @classmethod
+    def _safe_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9_\-:]+", v):
+            raise ValueError("id must match [A-Za-z0-9_-:]+")
+        return v
+
+
+@router.post(
+    "/chat/cancel",
+    summary="取消任务",
+    dependencies=[Depends(require_api_key), Depends(rate_limit)],
+)
+async def cancel_endpoint(req: CancelRequest):
+    """Cancel a running task by task_id or session_id."""
+    from api.task_manager import get_task_manager
+    tm = get_task_manager()
+    tid = req.task_id or req.session_id
+    if not tid:
+        raise HTTPException(400, "task_id or session_id required")
+    cancelled = tm.cancel(tid)
+    checkpoint = tm.get_checkpoint(tid)
+    return {
+        "cancelled": cancelled,
+        "task_id": tid,
+        "checkpoint_available": checkpoint is not None,
+    }
 
 
 @router.post(

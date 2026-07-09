@@ -56,15 +56,21 @@ class TaskClassificationAgent:
         # Backward-compat state alias
         self.state = self.state_manager.state
 
-    async def classify_task_stream(self, user_input: str, session_id: str = None):
+    async def classify_task_stream(
+        self, user_input: str, session_id: str = None, task_id: str = None,
+    ):
         async for token in self.classification_processor.process_task_stream(
-            user_input, session_id=session_id
+            user_input, session_id=session_id, task_id=task_id,
         ):
             yield token
 
-    async def classify_task(self, user_input: str, session_id: str = None) -> str:
+    async def classify_task(
+        self, user_input: str, session_id: str = None, task_id: str = None,
+    ) -> str:
         result = ""
-        async for token in self.classify_task_stream(user_input, session_id=session_id):
+        async for token in self.classify_task_stream(
+            user_input, session_id=session_id, task_id=task_id,
+        ):
             result += token
         return result
 
