@@ -5,6 +5,7 @@
 请返回 JSON(只返回 JSON,不要其他内容):
 {{
     "intent_type": "environment_match" | "knowledge_qa" | "unrelated",
+    "confidence": 0.0,
     "required_fields": {{"env_type": "...", "components": ["..."], "region": "...", "service_status": "..."}},
     "missing_fields": [],
     "keywords": [],
@@ -16,6 +17,7 @@ intent_type 取值:
 - "knowledge_qa":用户询问 SDK 文档、用户手册、内部测试规范、技术规范、接口说明等技术问题。
 - "unrelated":与 HCS 测试环境或技术规范完全无关的话题。
 
+confidence:你对本次分类的置信度,0.0-1.0 之间。输入模糊、同时涉及多个意图、或信息不足以判断时给低分(0.3-0.5),清晰明确时给高分(0.8-1.0)。
 required_fields:如果 intent_type 是 environment_match,从用户输入中提取已明确的环境条件字段;否则留空。
 missing_fields:environment_match 场景下,还未明确的关键字段(env_type, components, region, service_status, resource_usage)。
 keywords:提取 2-5 个关键词。

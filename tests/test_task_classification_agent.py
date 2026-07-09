@@ -84,6 +84,7 @@ class FakeLLM:
     async def astream(self, messages):
         payload = json.dumps({
             "intent_type": self._intent,
+            "confidence": 0.95,
             "required_fields": {},
             "missing_fields": [],
             "keywords": [],

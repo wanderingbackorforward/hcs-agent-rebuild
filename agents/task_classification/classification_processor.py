@@ -88,7 +88,7 @@ class ClassificationProcessor:
             yield t
 
     async def _full_classify_route(self, user_input, sid, lock):
-        """Step 6: full LLM classification, update/overwrite lock, route."""
+        """Full LLM classification, update/overwrite lock, route."""
         raw = ""
         history = self._load_history(sid)
         async for token in self.classifier.classify_stream(user_input, history=history):
@@ -96,11 +96,20 @@ class ClassificationProcessor:
         result = parse_classification_json(raw)
         intent_type = result.get("intent_type", "knowledge_qa")
         topic = result.get("topic", "N/A")
-        logger.info("Classified as: %s (topic: %s)", intent_type, topic)
+        confidence = float(result.get("confidence", 1.0))
+        logger.info("Classified as: %s (topic: %s, confidence: %.2f)", intent_type, topic, confidence)
         audit_event(layer="orchestrator", event_type="intent_decision",
-                    message="intent={} topic={}".format(intent_type, topic),
-                    data={"intent_type": intent_type, "topic": topic,
+                    message="intent={} topic={} confidence={:.2f}".format(intent_type, topic, confidence),
+                    data={"intent_type": intent_type, "topic": topic, "confidence": confidence,
                           "required_fields": result.get("required_fields", {})})
+        # Low-confidence classification -> ask for clarification instead of routing.
+        if confidence < CONFIDENCE_THRESHOLD:
+            audit_event(layer="orchestrator", event_type="low_confidence_clarify",
+                        message="full-classify low confidence {:.2f}".format(confidence),
+                        data={"intent_type": intent_type, "confidence": confidence,
+                              "input": user_input[:50]})
+            yield "我不太确定您的需求。您是想查询/匹配测试环境，还是询问技术文档和规范方面的问题？请稍作补充。"
+            return
         # Auto-overwrite: new intent != locked intent -> clear old params.
         if lock.intent and intent_type != lock.intent:
             clear_lock(self.repo, sid)
