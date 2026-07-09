@@ -5,6 +5,7 @@ import os
 import pytest
 
 from agents.task_classification.task_classifier import TaskClassifier
+from agents.task_classification.json_utils import parse_classification_json
 
 
 # 50 条 golden test cases for intent routing
@@ -94,8 +95,7 @@ class FakeLLM:
 @pytest.mark.parametrize("user_input, expected_intent", GOLDEN_TESTS)
 def test_parse_golden_json(user_input, expected_intent):
     """Verify classifier JSON parsing works for expected intent strings."""
-    classifier = TaskClassifier(FakeLLM(expected_intent))
-    result = classifier._parse_json(json.dumps({"intent_type": expected_intent}))
+    result = parse_classification_json(json.dumps({"intent_type": expected_intent}))
     assert result["intent_type"] == expected_intent
 
 

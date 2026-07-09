@@ -1,11 +1,11 @@
 """Task classifier - uses LLM to classify user intent for HCS platform."""
-import json
 import logging
-import re
 from pathlib import Path
 from typing import AsyncGenerator
 
 from langchain_core.messages import HumanMessage
+
+from agents.task_classification.json_utils import parse_classification_json
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class TaskClassifier:
         full = ""
         async for token in self.classify_stream(user_input, history):
             full += token
-        return self._parse_json(full)
+        return parse_classification_json(full)
 
     async def classify_stream(self, user_input: str, history: list = None) -> AsyncGenerator[str, None]:
         prompt = self._build_prompt(user_input, history)
@@ -43,28 +43,3 @@ class TaskClassifier:
             )
             history_text = f"\n最近对话历史:\n{history_text}\n"
         return self._prompt_template.format(history_text=history_text, user_input=user_input)
-
-    def _parse_json(self, text: str) -> dict:
-        try:
-            json_text = self._extract_json_object(text)
-            if json_text:
-                return json.loads(json_text)
-        except Exception:
-            pass
-        return {"intent_type": "knowledge_qa", "required_fields": {}, "missing_fields": [], "keywords": [], "topic": ""}
-
-    @staticmethod
-    def _extract_json_object(text: str) -> str | None:
-        """Extract the outermost JSON object from text, supporting nested braces."""
-        start = text.find("{")
-        if start == -1:
-            return None
-        depth = 0
-        for i, ch in enumerate(text[start:], start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[start : i + 1]
-        return None

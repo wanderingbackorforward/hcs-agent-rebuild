@@ -20,6 +20,7 @@ from typing import AsyncGenerator
 
 from config.audit import audit_event
 from agents.context_lock import ContextLock, load_lock, save_lock, clear_lock
+from agents.task_classification.json_utils import parse_classification_json
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ class ClassificationProcessor:
         history = self._load_history(sid)
         async for token in self.classifier.classify_stream(user_input, history=history):
             raw += token
-        result = self._parse_json(raw)
+        result = parse_classification_json(raw)
         intent_type = result.get("intent_type", "knowledge_qa")
         topic = result.get("topic", "N/A")
         logger.info("Classified as: %s (topic: %s)", intent_type, topic)
@@ -179,31 +180,6 @@ class ClassificationProcessor:
             return self.repo.get_history(sid)
         except Exception:
             return []
-
-    def _parse_json(self, text: str) -> dict:
-        try:
-            j = self._extract_json_object(text)
-            if j:
-                return json.loads(j)
-        except Exception:
-            pass
-        return {"intent_type": "knowledge_qa", "required_fields": {},
-                "missing_fields": [], "keywords": [], "topic": ""}
-
-    @staticmethod
-    def _extract_json_object(text: str) -> str | None:
-        start = text.find("{")
-        if start == -1:
-            return None
-        depth = 0
-        for i, ch in enumerate(text[start:], start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[start : i + 1]
-        return None
 
     def reset_conversation(self):
         self.state_manager.reset()
