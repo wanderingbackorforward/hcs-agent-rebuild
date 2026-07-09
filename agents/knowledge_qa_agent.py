@@ -15,6 +15,7 @@ from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
 
 from config.model_provider import create_chat_model, create_embedding_model
+from config.settings import app_settings
 from db.db_router import DatabaseRouter
 from db.repositories.session_repository import SessionRepository
 from services.knowledge_service import KnowledgeService
@@ -22,6 +23,7 @@ from agents.knowledge_qa import KnowledgeRetriever, ResponseGenerator
 from agents.memory import ShortTermMemory, LongTermMemory, TaskMemory
 from agents.memory.long_term_memory import MEMORY_COLLECTION
 from agents.context_manager import ContextManager, count_tokens
+from cache.registry import get_semantic_cache
 from rag.ingestion.storage.chroma_store import ChromaStore
 
 logger = logging.getLogger(__name__)
@@ -82,7 +84,7 @@ class KnowledgeQAAgent:
                  knowledge_service: Optional[KnowledgeService] = None,
                  memory_service=None):
         self.session_id = session_id or str(uuid.uuid4())
-        self.llm = create_chat_model(temperature=0)
+        self.llm = create_chat_model(temperature=app_settings.llm_temperature)
         self.knowledge_service = knowledge_service or KnowledgeService(db_router=db_router)
         self.retriever = KnowledgeRetriever(self.knowledge_service)
         self.response_generator = ResponseGenerator(self.llm)
@@ -146,8 +148,24 @@ class KnowledgeQAAgent:
         # U3: Set task type and track progress.
         self.task_memory.set_task("knowledge_qa")
 
+        # Semantic cache: reuse answers for similar past queries.
+        # On hit, skip retrieval + LLM generation + memory LLM calls; still
+        # record the turn in STM and SQLite so conversation history is intact.
+        cached = get_semantic_cache().get(user_query)
+        if cached is not None:
+            logger.info("Knowledge QA semantic cache hit, skipping retrieval+LLM")
+            self.task_memory.update_progress("query", user_query)
+            self.short_term_memory.add_message("user", user_query)
+            self.short_term_memory.add_message("ai", cached)
+            self.chat_history.add_user_message(user_query)
+            self.chat_history.add_ai_message(cached)
+            self.task_memory.add_result("answer", {"length": len(cached), "cached": True})
+            self.task_memory.update_progress("answered", True)
+            yield cached
+            return
+
         # U2: Build context with token budget management.
-        results = self.retriever.retrieve(user_query, top_k=5)
+        results = self.retriever.retrieve(user_query, top_k=app_settings.retrieval_top_k)
 
         # U3: Store retrieval results as intermediate results.
         self.task_memory.update_progress("query", user_query)
@@ -169,7 +187,7 @@ class KnowledgeQAAgent:
 
         # Build RAG context from retrieved docs.
         rag_context = ""
-        for i, (doc_id, text, score, meta) in enumerate(results[:5], 1):
+        for i, (doc_id, text, score, meta) in enumerate(results[:app_settings.retrieval_top_k], 1):
             title = meta.get("title", doc_id)
             rag_context += f"[{i}] 来源：{title}\n{text}\n\n"
 
@@ -187,6 +205,8 @@ class KnowledgeQAAgent:
             async for chunk in self.llm.astream([HumanMessage(content=prompt)]):
                 answer += chunk.content
             answer = answer.strip()
+            # Cache the successful answer for similar future queries.
+            get_semantic_cache().set(user_query, answer)
         except Exception as e:
             logger.warning(f"LLM answer generation failed: {e}")
             answer = "根据知识库检索结果：\n" + "\n".join(

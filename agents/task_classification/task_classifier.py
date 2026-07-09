@@ -1,19 +1,13 @@
 """Task classifier - uses LLM to classify user intent for HCS platform."""
 import logging
-from pathlib import Path
 from typing import AsyncGenerator
 
 from langchain_core.messages import HumanMessage
 
 from agents.task_classification.json_utils import parse_classification_json
+from prompts.loader import load_prompt
 
 logger = logging.getLogger(__name__)
-
-PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
-
-
-def _load_prompt_template(name: str) -> str:
-    return (PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
 class TaskClassifier:
@@ -21,7 +15,7 @@ class TaskClassifier:
 
     def __init__(self, llm, prompt_file: str = "classification_v1.txt"):
         self.llm = llm
-        self._prompt_template = _load_prompt_template(prompt_file)
+        self._prompt_template = load_prompt(prompt_file)
 
     async def classify(self, user_input: str, history: list = None) -> dict:
         full = ""

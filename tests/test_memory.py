@@ -532,17 +532,19 @@ def test_ms_session_isolation():
 # --- Prompt externalization ---
 
 def test_stm_prompt_loaded_from_file():
-    """STM should load prompt from prompts/stm_rolling_summary_v1.txt."""
-    from agents.memory.short_term_memory import _load_prompt_template, _STM_PROMPT_FILE
-    template = _load_prompt_template(_STM_PROMPT_FILE)
+    """STM should load prompt from prompts/stm_rolling_summary_v1.txt via the cached loader."""
+    from agents.memory.short_term_memory import _STM_PROMPT_FILE
+    from prompts.loader import load_prompt
+    template = load_prompt(_STM_PROMPT_FILE)
     assert "{transcript}" in template
     assert "{existing}" in template
 
 
 def test_ltm_prompt_loaded_from_file():
-    """LTM should load prompt from prompts/ltm_judge_and_extract_v1.txt."""
-    from agents.memory.long_term_memory import _load_prompt_template, _LTM_PROMPT_FILE
-    template = _load_prompt_template(_LTM_PROMPT_FILE)
+    """LTM should load prompt from prompts/ltm_judge_and_extract_v1.txt via the cached loader."""
+    from agents.memory.long_term_memory import _LTM_PROMPT_FILE
+    from prompts.loader import load_prompt
+    template = load_prompt(_LTM_PROMPT_FILE)
     assert "{content}" in template
     assert "importance" in template
     assert "entities" in template

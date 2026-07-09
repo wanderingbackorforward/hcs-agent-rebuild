@@ -8,13 +8,13 @@ across different callers.
 Wraps the versioned prompt file prompts/rag_answer_v1.txt.
 """
 import logging
-from pathlib import Path
 
 from mcp import types
 
+from prompts.loader import load_prompt
+
 logger = logging.getLogger(__name__)
 
-PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 PROMPT_FILE = "rag_answer_v1.txt"
 
 PROMPT_NAME = "rag-answer"
@@ -36,13 +36,9 @@ PROMPT_ARGUMENTS = [
 ]
 
 
-def _load_template() -> str:
-    return (PROMPTS_DIR / PROMPT_FILE).read_text(encoding="utf-8")
-
-
 def rag_answer_handler(context: str, query: str) -> str:
     """Render the RAG answer prompt with the given context and query."""
-    template = _load_template()
+    template = load_prompt(PROMPT_FILE)
     return template.format(context=context, query=query)
 
 

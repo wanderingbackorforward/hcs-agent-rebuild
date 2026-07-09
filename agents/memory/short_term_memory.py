@@ -5,20 +5,17 @@ context window overflows, older turns are LLM-summarized into a compact
 paragraph, keeping token budget under control while preserving key info."
 """
 import logging
-from pathlib import Path
 from typing import List
 from langchain_core.messages import HumanMessage
 
+from config.settings import app_settings
+from prompts.loader import load_prompt
+
 logger = logging.getLogger(__name__)
-DEFAULT_MAX_TURNS = 6
-KEEP_RECENT = 4
+DEFAULT_MAX_TURNS = app_settings.stm_max_turns
+KEEP_RECENT = app_settings.stm_keep_recent
 
-_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 _STM_PROMPT_FILE = "stm_rolling_summary_v1.txt"
-
-
-def _load_prompt_template(name: str) -> str:
-    return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
 class ShortTermMemory:
@@ -70,7 +67,7 @@ class ShortTermMemory:
         )
 
         existing = "\nPrevious summary:\n{}\n".format(self._summary) if self._summary else ""
-        prompt = _load_prompt_template(_STM_PROMPT_FILE).format(
+        prompt = load_prompt(_STM_PROMPT_FILE).format(
             existing=existing, transcript=transcript,
         )
 
@@ -96,7 +93,7 @@ class ShortTermMemory:
         )
 
         existing = "\nPrevious summary:\n{}\n".format(self._summary) if self._summary else ""
-        prompt = _load_prompt_template(_STM_PROMPT_FILE).format(
+        prompt = load_prompt(_STM_PROMPT_FILE).format(
             existing=existing, transcript=transcript,
         )
 

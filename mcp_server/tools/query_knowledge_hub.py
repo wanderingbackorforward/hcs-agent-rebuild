@@ -1,22 +1,18 @@
 """MCP Tool: query_knowledge_hub - hybrid search over HCS knowledge base."""
 import logging
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from mcp import types
 
 from services.knowledge_service import KnowledgeService
 from config.model_provider import create_chat_model
+from config.settings import app_settings
 from langchain_core.messages import HumanMessage
 from mcp_server.errors import format_error
+from cache.registry import get_tool_cache
+from prompts.loader import load_prompt
 
 logger = logging.getLogger(__name__)
-
-PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
-
-
-def _load_prompt_template(name: str) -> str:
-    return (PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
 TOOL_NAME = "query_knowledge_hub"
@@ -47,10 +43,22 @@ PROMPT_FILE = "rag_answer_v1.txt"
 
 async def query_knowledge_hub_handler(
     query: str,
-    top_k: int = 5,
+    top_k: int = app_settings.retrieval_top_k,
     collection: Optional[str] = None,
 ) -> types.CallToolResult:
     try:
+        tool_cache = get_tool_cache()
+        # Final-result cache: skip retrieval + LLM for repeated queries.
+        # Key includes collection so scoped searches don't collide.
+        cached_text = tool_cache.get(
+            query, "knowledge_hub", top_k=top_k, collection=collection
+        )
+        if cached_text is not None:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=cached_text)],
+                isError=False,
+            )
+
         service = KnowledgeService()
         service.initialize()
         filters = None
@@ -71,8 +79,8 @@ async def query_knowledge_hub_handler(
 
         answer = ""
         try:
-            llm = create_chat_model(temperature=0)
-            prompt = _load_prompt_template(PROMPT_FILE).format(context=context, query=query)
+            llm = create_chat_model(temperature=app_settings.llm_temperature)
+            prompt = load_prompt(PROMPT_FILE).format(context=context, query=query)
             full = ""
             async for chunk in llm.astream([HumanMessage(content=prompt)]):
                 full += chunk.content
@@ -89,8 +97,14 @@ async def query_knowledge_hub_handler(
             title = meta.get("title", doc_id)
             lines.append(f"{i}. **{title}** (score={score:.4f})\n   {text[:200]}...")
 
+        output_text = "\n".join(lines)
+        # Cache the final result (answer + references) for repeated queries.
+        tool_cache.set(
+            query, "knowledge_hub", output_text, top_k=top_k, collection=collection
+        )
+
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text="\n".join(lines))],
+            content=[types.TextContent(type="text", text=output_text)],
             isError=False,
         )
     except Exception as e:

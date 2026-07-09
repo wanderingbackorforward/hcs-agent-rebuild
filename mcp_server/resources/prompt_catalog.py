@@ -6,7 +6,8 @@ prompts are available for reuse. It reads the filesystem at read time,
 so newly added templates appear automatically.
 """
 import logging
-from pathlib import Path
+
+from prompts.loader import list_prompt_names, load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -18,26 +19,21 @@ RESOURCE_DESCRIPTION = (
 )
 RESOURCE_MIME_TYPE = "text/plain"
 
-PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
-
 
 def prompt_catalog_handler() -> str:
     """Return a listing of all prompt template files with previews."""
     try:
-        if not PROMPTS_DIR.exists():
-            return "# Prompt Catalog\n\n(prompts/ directory not found)"
-
-        files = sorted(PROMPTS_DIR.glob("*.txt"))
-        if not files:
+        names = list_prompt_names()
+        if not names:
             return "# Prompt Catalog\n\n(no prompt templates found)"
 
         lines = ["# Prompt Catalog", ""]
-        lines.append(f"**Templates found:** {len(files)}")
+        lines.append(f"**Templates found:** {len(names)}")
         lines.append("")
-        for f in files:
-            content = f.read_text(encoding="utf-8")
+        for name in names:
+            content = load_prompt(name)
             preview = content[:100].replace("\n", " ").strip()
-            lines.append(f"## {f.name}")
+            lines.append(f"## {name}")
             lines.append(f"> {preview}...")
             lines.append("")
         return "\n".join(lines)

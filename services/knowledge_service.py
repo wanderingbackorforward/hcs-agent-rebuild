@@ -2,8 +2,10 @@
 import logging
 
 from db.db_router import DatabaseRouter
+from config.settings import app_settings
 from rag.ingestion.pipeline import IngestionPipeline
 from rag.query_engine.hybrid_search import HybridSearch
+from cache.registry import invalidate_semantic_cache, invalidate_tool_cache
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +43,9 @@ class KnowledgeService:
                 source="seed",
             )
 
-    def search(self, query: str, top_k: int = 5, filters: dict = None):
+    def search(self, query: str, top_k: int = None, filters: dict = None):
+        if top_k is None:
+            top_k = app_settings.retrieval_top_k
         self.initialize()
         return self.hybrid_search.search(query, top_k=top_k, filters=filters)
 
@@ -56,4 +60,9 @@ class KnowledgeService:
     def ingest_text(self, content: str, doc_id: str = None, category: str = "spec",
                     title: str = None, source: str = None) -> str:
         self.initialize()
-        return self.pipeline.ingest_text(content, doc_id, category, title, source)
+        result = self.pipeline.ingest_text(content, doc_id, category, title, source)
+        # Invalidate caches: new/updated documents must produce fresh retrieval
+        # results and answers, not stale cached ones.
+        invalidate_semantic_cache()
+        invalidate_tool_cache()
+        return result

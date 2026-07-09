@@ -2,7 +2,9 @@
 from typing import List, Tuple, Dict
 from rag.query_engine.dense_retriever import DenseRetriever
 from rag.query_engine.sparse_retriever import SparseRetriever
+from cache.registry import get_tool_cache
 from config.reranker_factory import create_reranker, Reranker
+from config.settings import app_settings
 
 
 class HybridSearch:
@@ -41,11 +43,20 @@ class HybridSearch:
             output.append((doc_id, text, score, meta))
         return output
 
-    def search(self, query: str, top_k: int = 5,
+    def search(self, query: str, top_k: int = app_settings.retrieval_top_k,
                filters: Dict = None) -> List[Tuple[str, str, float, Dict]]:
+        # Tool cache: skip the dense+BM25+RRF+rerank pipeline for repeated
+        # queries. Keyed by query+top_k+filters so scoped searches don't collide.
+        tool_cache = get_tool_cache()
+        cached = tool_cache.get(query, "hybrid_search", top_k=top_k, filters=filters)
+        if cached is not None:
+            return cached
+
         self.sparse.refresh()
         dense_results = self.dense.retrieve(query, top_k=top_k, filters=filters)
         sparse_results = self.sparse.retrieve(query, top_k=top_k, filters=filters)
         fused = self._rrf_fuse(dense_results, sparse_results)
         reranked = self.reranker.rerank(query, fused, top_k=top_k)
+
+        tool_cache.set(query, "hybrid_search", reranked, top_k=top_k, filters=filters)
         return reranked

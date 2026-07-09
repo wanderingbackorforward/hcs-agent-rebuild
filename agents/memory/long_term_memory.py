@@ -7,23 +7,20 @@ persisting. Retrieval uses recency decay + semantic relevance weighted scoring."
 import json
 import logging
 import time
-from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from langchain_core.messages import HumanMessage
 
+from config.settings import app_settings
+from prompts.loader import load_prompt
+
 logger = logging.getLogger(__name__)
 MEMORY_COLLECTION = "agent_long_term_memory"
-DEFAULT_TTL = 30 * 24 * 3600
-RECENCY_HALFLIFE = 7 * 24 * 3600
-IMPORTANCE_THRESHOLD = 0.7  # below this -> not stored (conflict prevention)
-CONFIDENCE_THRESHOLD = 0.15  # combined score below this -> not injected
+DEFAULT_TTL = app_settings.ltm_ttl
+RECENCY_HALFLIFE = app_settings.ltm_recency_halflife
+IMPORTANCE_THRESHOLD = app_settings.ltm_importance_threshold
+CONFIDENCE_THRESHOLD = app_settings.ltm_confidence_threshold
 
-_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 _LTM_PROMPT_FILE = "ltm_judge_and_extract_v1.txt"
-
-
-def _load_prompt_template(name: str) -> str:
-    return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
 class MemoryEntry:
@@ -94,7 +91,7 @@ class LongTermMemory:
         if not self.llm:
             return 0.75, "fact", {}  # optimistic default above threshold
 
-        prompt = _load_prompt_template(_LTM_PROMPT_FILE).format(content=content)
+        prompt = load_prompt(_LTM_PROMPT_FILE).format(content=content)
 
         try:
             # Use sync invoke directly — works in both sync and async contexts.

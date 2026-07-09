@@ -11,9 +11,11 @@ from typing import Dict, Optional
 from langchain_core.messages import HumanMessage
 
 from agents.context_manager import count_tokens
+from config.settings import app_settings
+from prompts.loader import load_prompt
 
 logger = logging.getLogger(__name__)
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = app_settings.react_max_iterations
 
 # Termination reasons (mirror eval.trace constants to avoid import cycle).
 _REASON_FINAL = "final_answer"
@@ -21,32 +23,7 @@ _REASON_MAX_ITER = "max_iterations"
 _REASON_NO_ACTION = "no_action"
 _REASON_ERROR = "error"
 
-REACT_PROMPT = """你是一个知识问答Agent。你可以使用以下工具来回答问题。
-
-## 可用工具
-1. query_knowledge_hub(query: str, top_k: int=5) - 搜索知识库
-2. list_collections() - 列出所有知识集合
-3. get_document_summary(doc_id: str) - 获取文档摘要
-
-## 对话历史
-{conversation_context}
-
-## 已执行的步骤
-{scratchpad}
-
-## 当前问题
-{question}
-
-## 输出格式
-如果你想使用工具，输出：
-Thought: <你的推理过程>
-Action: {{"tool": "工具名", "args": {{"参数": "值"}}}}
-
-如果你已经有足够信息回答，输出：
-Thought: <你的推理过程>
-Final Answer: <最终答案>
-
-## 你的输出："""
+_REACT_PROMPT_FILE = "react_v1.txt"
 
 
 class ReActLoop:
@@ -67,7 +44,7 @@ class ReActLoop:
             self.recorder.start(query=question)
         for i in range(self.max_iterations):
             step_start = time.time()
-            prompt = REACT_PROMPT.format(
+            prompt = load_prompt(_REACT_PROMPT_FILE).format(
                 conversation_context=conversation_context or "(无历史)",
                 scratchpad=scratchpad or "(无)",
                 question=question,

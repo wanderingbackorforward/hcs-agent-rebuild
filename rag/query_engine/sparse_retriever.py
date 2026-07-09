@@ -4,6 +4,7 @@ import jieba
 from typing import List, Tuple, Dict
 from rank_bm25 import BM25Okapi
 from rag.ingestion.storage.chroma_store import ChromaStore
+from config.settings import app_settings
 
 
 class SparseRetriever:
@@ -11,6 +12,8 @@ class SparseRetriever:
         self.store = store or ChromaStore()
         self._documents = []
         self._metadatas = []
+        self._ids = []
+        self._doc_count = 0
         self._bm25 = None
         self._build_index()
 
@@ -22,17 +25,21 @@ class SparseRetriever:
         results = self.store.collection.get(include=["documents", "metadatas"])
         docs = results.get("documents", [])
         metas = results.get("metadatas", [])
+        ids = results.get("ids", [])
+        self._doc_count = len(docs)
         if not docs:
             self._documents = []
             self._metadatas = []
+            self._ids = []
             self._bm25 = None
             return
         self._documents = docs
         self._metadatas = metas
+        self._ids = ids
         tokenized = [self._tokenize(d) for d in docs]
         self._bm25 = BM25Okapi(tokenized)
 
-    def retrieve(self, query: str, top_k: int = 5,
+    def retrieve(self, query: str, top_k: int = app_settings.retrieval_top_k,
                  filters: Dict = None) -> List[Tuple[str, str, float, Dict]]:
         if not self._bm25:
             return []
@@ -42,18 +49,27 @@ class SparseRetriever:
         indexed.sort(key=lambda x: x[1], reverse=True)
 
         results = []
-        all_ids = self.store.collection.get(include=["documents"]).get("ids", [])
         for idx, score in indexed[:top_k * 3]:
             meta = self._metadatas[idx] if idx < len(self._metadatas) else {}
             if filters:
                 match = all(meta.get(k) == v for k, v in filters.items())
                 if not match:
                     continue
-            chunk_id = all_ids[idx] if idx < len(all_ids) else f"chunk_{idx}"
+            chunk_id = self._ids[idx] if idx < len(self._ids) else f"chunk_{idx}"
             results.append((chunk_id, self._documents[idx], float(score), meta))
             if len(results) >= top_k:
                 break
         return results
 
     def refresh(self):
+        """Rebuild the BM25 index only if the corpus has changed.
+
+        ChromaStore.upsert always generates fresh uuid ids, so the document
+        count changes whenever new chunks are added. Comparing count() is a
+        cheap O(1) way to skip the expensive jieba re-tokenization + BM25
+        rebuild when nothing has changed (the common case in search()).
+        """
+        current_count = self.store.collection.count()
+        if current_count == self._doc_count and self._bm25 is not None:
+            return
         self._build_index()
