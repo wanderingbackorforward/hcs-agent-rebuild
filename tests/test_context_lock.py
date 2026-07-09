@@ -20,11 +20,12 @@ class FakeClassifier:
         self.fields = fields or {}
         self.call_count = 0
 
-    async def classify_stream(self, user_input):
+    async def classify_stream(self, user_input, history=None):
         import json
         self.call_count += 1
         yield json.dumps({
             "intent_type": self.intent,
+            "confidence": 0.95,
             "required_fields": self.fields,
             "missing_fields": [], "keywords": [], "topic": "t",
         })
@@ -117,7 +118,7 @@ def test_llm_fallback_continuation(tmp_path):
     save_lock(repo, "s5", "knowledge_qa", {})
 
     class JudgeLLM:
-        def invoke(self, msgs):
+        async def ainvoke(self, msgs):
             return type("R", (), {"content": "是"})()
 
     proc = _processor(repo, llm=JudgeLLM(), intent="knowledge_qa")
