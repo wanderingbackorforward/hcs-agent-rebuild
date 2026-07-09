@@ -25,6 +25,33 @@
         .message { margin-bottom: 12px; line-height: 1.5; }
         .user { color: #1a73e8; font-weight: bold; }
         .assistant { color: #333; }
+        .status-bar {
+            color: #666;
+            font-size: 13px;
+            padding: 4px 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .status-bar::before {
+            content: '';
+            width: 10px;
+            height: 10px;
+            border: 2px solid #1a73e8;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error-card {
+            background: #fee;
+            border: 1px solid #f99;
+            border-radius: 6px;
+            padding: 10px;
+            margin: 8px 0;
+        }
+        .error-card .suggestion { color: #665; font-size: 13px; margin-top: 4px; }
+        .error-card button { margin-top: 8px; }
         #input-row { display: flex; gap: 8px; }
         #message-input {
             flex: 1;
@@ -42,6 +69,7 @@
             cursor: pointer;
         }
         button:hover { background: #1557b0; }
+        button:disabled { background: #aaa; cursor: not-allowed; }
         .hint { color: #666; font-size: 12px; margin-top: 8px; }
     </style>
 </head>
@@ -50,14 +78,18 @@
     <div id="chat-box"></div>
     <div id="input-row">
         <input type="text" id="message-input" placeholder="请输入您的问题，例如：找一个 MySQL + Redis 的测试环境" />
-        <button onclick="sendMessage()">发送</button>
+        <button id="send-btn" onclick="sendMessage()">发送</button>
+        <button id="cancel-btn" onclick="cancelRequest()" style="display:none; background:#f44;">取消</button>
     </div>
-    <div class="hint">支持：HCS 测试环境匹配、SDK/手册/规范知识问答。</div>
+    <div class="hint">支持：HCS 测试环境匹配、SDK/手册/规范知识问答。流式 SSE 输出，实时展示处理状态。</div>
 
     <script>
         const chatBox = document.getElementById('chat-box');
         const input = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-btn');
+        const cancelBtn = document.getElementById('cancel-btn');
         let sessionId = localStorage.getItem('hcs_session_id') || null;
+        let currentController = null;
 
         function appendMessage(role, text) {
             const div = document.createElement('div');
@@ -65,36 +97,156 @@
             div.innerHTML = '<strong>' + (role === 'user' ? '您' : 'AI') + '：</strong>' + text.replace(/\n/g, '<br>');
             chatBox.appendChild(div);
             chatBox.scrollTop = chatBox.scrollHeight;
+            return div;
         }
+
+        function setStatus(msg) {
+            let bar = document.getElementById('status-bar');
+            if (!msg) { if (bar) bar.remove(); return; }
+            if (!bar) {
+                bar = document.createElement('div');
+                bar.id = 'status-bar';
+                bar.className = 'status-bar';
+                chatBox.appendChild(bar);
+            }
+            bar.textContent = msg;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function showError(message, suggestion, retryable) {
+            const card = document.createElement('div');
+            card.className = 'message error-card';
+            card.innerHTML = '<strong>错误：</strong>' + message;
+            if (suggestion) {
+                card.innerHTML += '<div class="suggestion">' + suggestion + '</div>';
+            }
+            if (retryable) {
+                const btn = document.createElement('button');
+                btn.textContent = '重试';
+                btn.onclick = () => { card.remove(); retryLast(); };
+                card.appendChild(btn);
+            }
+            chatBox.appendChild(card);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        let lastMessage = '';
 
         async function sendMessage() {
             const text = input.value.trim();
             if (!text) return;
+            lastMessage = text;
             appendMessage('user', text);
             input.value = '';
+            sendBtn.disabled = true;
+            cancelBtn.style.display = '';
 
             const payload = { message: text };
             if (sessionId) payload.session_id = sessionId;
 
+            currentController = new AbortController();
+
             try {
-                const response = await fetch('/chat', {
+                const resp = await fetch('/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(payload),
+                    signal: currentController.signal,
                 });
-                const data = await response.json();
-                if (data.session_id) {
-                    sessionId = data.session_id;
-                    localStorage.setItem('hcs_session_id', sessionId);
+
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+                    showError(err.detail || '请求失败', '', false);
+                    return;
                 }
-                appendMessage('assistant', data.reply || '无回复');
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let aiDiv = null;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const events = buffer.split('\n\n');
+                    buffer = events.pop();
+
+                    for (const raw of events) {
+                        if (!raw.trim()) continue;
+                        let type = 'message';
+                        let data = '';
+                        for (const line of raw.split('\n')) {
+                            if (line.startsWith('event: ')) type = line.slice(7);
+                            else if (line.startsWith('data: ')) data = line.slice(6);
+                        }
+                        handleSSEEvent(type, data);
+                    }
+                }
             } catch (e) {
-                appendMessage('assistant', '请求失败：' + e.message);
+                if (e.name === 'AbortError') {
+                    setStatus(null);
+                    appendMessage('assistant', '（已取消）');
+                } else {
+                    showError('网络错误：' + e.message, '请检查网络后重试', true);
+                }
+            } finally {
+                setStatus(null);
+                sendBtn.disabled = false;
+                cancelBtn.style.display = 'none';
+                currentController = null;
+            }
+        }
+
+        function handleSSEEvent(type, dataStr) {
+            let data = {};
+            try { data = JSON.parse(dataStr); } catch(e) {}
+
+            switch (type) {
+                case 'status':
+                    setStatus(data.message || '处理中...');
+                    break;
+                case 'token':
+                    setStatus(null);
+                    if (!window._currentAiDiv) {
+                        window._currentAiDiv = appendMessage('assistant', '');
+                    }
+                    window._currentAiDiv.innerHTML += (data.content || '').replace(/\n/g, '<br>');
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                    break;
+                case 'error':
+                    setStatus(null);
+                    showError(data.message || '未知错误', data.suggestion || '', data.retryable || false);
+                    window._currentAiDiv = null;
+                    break;
+                case 'done':
+                    setStatus(null);
+                    if (data.session_id) {
+                        sessionId = data.session_id;
+                        localStorage.setItem('hcs_session_id', sessionId);
+                    }
+                    window._currentAiDiv = null;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        function cancelRequest() {
+            if (currentController) {
+                currentController.abort();
+            }
+        }
+
+        function retryLast() {
+            if (lastMessage) {
+                input.value = lastMessage;
+                sendMessage();
             }
         }
 
         input.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') sendMessage();
+            if (e.key === 'Enter' && !sendBtn.disabled) sendMessage();
         });
     </script>
 </body>
