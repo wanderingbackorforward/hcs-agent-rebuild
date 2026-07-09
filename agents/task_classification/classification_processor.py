@@ -45,16 +45,23 @@ class ClassificationProcessor:
         self.llm = llm
         self.semantic_checker = semantic_checker or SemanticChecker()
 
-    async def process_task_stream(self, user_input: str, session_id: str = None) -> AsyncGenerator[str, None]:
+    async def process_task_stream(
+        self, user_input: str, session_id: str = None,
+        task_id: str = None,
+    ) -> AsyncGenerator[str, None]:
         sid = session_id or ""
         lock = load_lock(self.repo, sid)
+
+        # Cooperative cancellation check.
+        if task_id and self._is_cancelled(task_id):
+            return
 
         # L1: switch-word fast intercept (0 cost).
         if self._is_switch(user_input):
             clear_lock(self.repo, sid)
             yield SSEEvent.decision(**build_decision("switch"))
             yield SSEEvent.status("classifying", "检测到话题切换，重新理解需求...")
-            async for t in self._full_classify_route(user_input, sid, lock):
+            async for t in self._full_classify_route(user_input, sid, lock, task_id):
                 yield t
             return
 
@@ -90,11 +97,13 @@ class ClassificationProcessor:
         if lock.is_active:
             clear_lock(self.repo, sid)
         # Full classify + route.
-        async for t in self._full_classify_route(user_input, sid, lock):
+        async for t in self._full_classify_route(user_input, sid, lock, task_id):
             yield t
 
-    async def _full_classify_route(self, user_input, sid, lock):
+    async def _full_classify_route(self, user_input, sid, lock, task_id=None):
         """Full LLM classification, update/overwrite lock, route."""
+        if task_id and self._is_cancelled(task_id):
+            return
         yield SSEEvent.status("classifying", "正在理解您的需求...")
         raw = ""
         history = self._load_history(sid)
@@ -130,11 +139,27 @@ class ClassificationProcessor:
             clear_lock(self.repo, sid)
         if intent_type in ("environment_match", "knowledge_qa"):
             save_lock(self.repo, sid, intent_type, result.get("required_fields", {}))
+        # Cancellation check + checkpoint before routing.
+        if task_id and self._is_cancelled(task_id):
+            self._save_checkpoint(task_id, stage="pre_route",
+                                   intent_type=intent_type, sid=sid)
+            return
         if intent_type == "unrelated":
             yield await self.unrelated_handler.handle(user_input)
         else:
             async for t in self.router.route(intent_type, user_input, session_id=sid):
                 yield t
+
+    # ---- Task cancellation helpers (lazy import to avoid circular) ----
+    @staticmethod
+    def _is_cancelled(task_id: str) -> bool:
+        from api.task_manager import get_task_manager
+        return get_task_manager().is_cancelled(task_id)
+
+    @staticmethod
+    def _save_checkpoint(task_id: str, **state) -> None:
+        from api.task_manager import get_task_manager
+        get_task_manager().checkpoint(task_id, state)
 
     # ---- L1 / L3: switch + continuation ----
     def _is_switch(self, text: str) -> bool:

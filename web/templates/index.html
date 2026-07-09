@@ -130,6 +130,7 @@
         const cancelBtn = document.getElementById('cancel-btn');
         let sessionId = localStorage.getItem('hcs_session_id') || null;
         let currentController = null;
+        let currentTaskId = null;
 
         function appendMessage(role, text) {
             const div = document.createElement('div');
@@ -199,6 +200,7 @@
                     showError(err.detail || '请求失败', '', false);
                     return;
                 }
+                currentTaskId = resp.headers.get('x-task-id');
 
                 const reader = resp.body.getReader();
                 const decoder = new TextDecoder();
@@ -235,6 +237,7 @@
                 sendBtn.disabled = false;
                 cancelBtn.style.display = 'none';
                 currentController = null;
+                currentTaskId = null;
             }
         }
 
@@ -323,6 +326,13 @@
         function cancelRequest() {
             if (currentController) {
                 currentController.abort();
+            }
+            if (currentTaskId) {
+                fetch('/chat/cancel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ task_id: currentTaskId }),
+                }).catch(() => {});
             }
         }
 

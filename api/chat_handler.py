@@ -93,17 +93,25 @@ def _get_agent(session_id: str):
     return _session_agents[session_id][0]
 
 
-async def process_user_input_stream(user_input: str, session_id: str = None):
+async def process_user_input_stream(
+    user_input: str, session_id: str = None, task_id: str = None,
+):
     """Stream-process a user message and yield reply tokens."""
     sid = session_id or str(uuid.uuid4())
     agent = _get_agent(sid)
-    async for token in agent.classify_task_stream(user_input, session_id=sid):
+    async for token in agent.classify_task_stream(
+        user_input, session_id=sid, task_id=task_id,
+    ):
         yield token
 
 
-async def process_user_input(user_input: str, session_id: str = None) -> str:
+async def process_user_input(
+    user_input: str, session_id: str = None, task_id: str = None,
+) -> str:
     """Non-streaming wrapper for chat."""
     result = ""
-    async for token in process_user_input_stream(user_input, session_id):
+    async for token in process_user_input_stream(
+        user_input, session_id, task_id=task_id,
+    ):
         result += token
     return result
