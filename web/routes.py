@@ -127,11 +127,19 @@ async def chat_stream_endpoint(chat: ChatRequest, request: Request):
                 session_id=sid, task_id=task_id,
             ).to_sse()
         except Exception as e:
-            audit_event(layer="bff", event_type="error",
-                        message=f"stream error: {type(e).__name__}",
-                        data={"error": str(e)[:200]}, level=40)
+            from config.error_classifier import classify
+            info = classify(e)
+            audit_event(
+                layer="bff", event_type="error",
+                message=f"stream error: {info.error_type}",
+                data={"category": info.category.value,
+                      "error": str(e)[:200]},
+                level=40,
+            )
             yield SSEEvent.error(
-                type(e).__name__, "处理异常，请重试", retryable=True,
+                info.error_type, info.user_message,
+                retryable=info.category.value == "retryable",
+                suggestion=info.suggestion,
             ).to_sse()
         finally:
             tm.cleanup(task_id)
@@ -181,6 +189,37 @@ async def cancel_endpoint(req: CancelRequest):
         "task_id": tid,
         "checkpoint_available": checkpoint is not None,
     }
+
+
+_retry_counts: dict[str, int] = {}
+MAX_RETRIES = 3
+
+
+@router.post(
+    "/chat/retry",
+    summary="重试上次消息",
+    dependencies=[Depends(require_api_key), Depends(rate_limit)],
+)
+async def retry_endpoint(req: CancelRequest):
+    """Return last user message for retry, with count tracking."""
+    sid = req.session_id or req.task_id
+    if not sid:
+        raise HTTPException(400, "session_id required")
+    count = _retry_counts.get(sid, 0)
+    if count >= MAX_RETRIES:
+        raise HTTPException(429, f"Max retries ({MAX_RETRIES}) exceeded")
+    _retry_counts[sid] = count + 1
+    from db.db_router import DatabaseRouter
+    history = DatabaseRouter().session.get_history(sid)
+    last_user = next(
+        (m["content"] for m in reversed(history)
+         if m.get("role") == "user"),
+        None,
+    )
+    if not last_user:
+        raise HTTPException(404, "No previous message to retry")
+    _retry_counts.pop(sid, None)  # reset on successful lookup
+    return {"message": last_user, "session_id": sid}
 
 
 @router.post(
