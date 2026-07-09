@@ -280,3 +280,48 @@
 2. "决策可解释性？" → decision 事件推送路由原因和置信度，折叠面板展示，mask_sensitive 过滤敏感信息
 3. "任务可以中断吗？" → asyncio.CancelledError 处理 + checkpoint 断点续传 + TaskManager 状态管理
 4. "出错怎么办？" → 错误分类（可重试/不可重试）+ 用户建议 + 一键重试（max 3 次）
+
+### 2026-07-09 U8-U11 全部实现完成
+
+**完成状态**：
+
+| # | 考点 | 状态 | 新增/修改文件 | 测试 | 验证结果 |
+|---|------|------|-------------|------|---------|
+| U8 | 延迟感知 (SSE) | 已实现 | `config/sse_protocol.py`, `api/sse_protocol.py`, `api/sse_buffer.py`, 改 `web/routes.py`, 改前端 | `tests/test_sse_protocol.py` (15 tests) | 70 tests PASSED |
+| U9 | 决策可解释性 | 已实现 | `config/decision_explainer.py`, 改 `classification_processor.py`, 改 `agent_router.py`, 改 `knowledge_qa_agent.py`, 改前端 | `tests/test_decision_explainer.py` (13 tests) | 70 tests PASSED |
+| U10 | 任务可中断 | 已实现 | `api/task_manager.py`, 改 `web/routes.py` (cancel endpoint), 改 `classification_processor.py` (cancellation checks), 改前端 | `tests/test_task_manager.py` (11 tests) | 70 tests PASSED |
+| U11 | 错误恢复 | 已实现 | `config/error_classifier.py`, 改 `web/routes.py` (retry endpoint + classify integration), 前端错误卡片 | `tests/test_error_classifier.py` (22 tests) | 70 tests PASSED |
+
+**Git 历史**（4 feature 分支，--no-ff 合并到 main）：
+- `811a5a2` merge: feature/error-recovery — error classification and retry (U11)
+- `f005d2a` feat(error): error classifier + retry endpoint with max-retry protection
+- `11106bb` merge: feature/task-interruptible — task cancellation and checkpointing (U10)
+- `a235420` feat(task): cancel endpoint + pipeline cancellation checks + frontend
+- `f2bacde` feat(task): TaskManager for cooperative cancellation and checkpointing
+- `b31902b` merge: feature/decision-explainability — decision explainability (U9)
+- `b2dd483` feat(decision): emit decision SSE events + frontend collapsible panel
+- `1789ec0` feat(decision): decision explainer module with safe field whitelisting
+- `d8b7d7f` merge: feature/sse-streaming — SSE protocol upgrade (U8)
+- `c523386` feat(sse): frontend EventSource consumption with streaming display
+- `cef65ca` feat(sse): backend SSE streaming + agent pipeline status events
+- `55cd536` feat(sse): SSE event protocol and ring buffer for structured streaming
+
+**新增文件清单（8 个）**：
+- `config/sse_protocol.py` — SSEEvent dataclass + 5 factory methods + format_sse_stream + collect_text
+- `api/sse_protocol.py` — thin re-export (避免循环导入)
+- `api/sse_buffer.py` — per-session ring buffer for Last-Event-ID replay
+- `config/decision_explainer.py` — build_decision + agent_display_name + field whitelisting + mask_sensitive
+- `api/task_manager.py` — TaskManager (cooperative cancel via asyncio.Event + checkpoint + TTL prune)
+- `config/error_classifier.py` — classify() + ErrorInfo + ErrorCategory (type rules + pattern rules + conservative default)
+- `tests/test_sse_protocol.py` — 15 tests
+- `tests/test_decision_explainer.py` — 13 tests
+- `tests/test_task_manager.py` — 11 tests
+- `tests/test_error_classifier.py` — 22 tests
+
+**关键设计决策**：
+- SSEEvent 放 `config/` 不放 `api/` — 避免 `api/__init__` → `chat_handler` → `agents` → `api` 循环导入
+- 协作式取消用 asyncio.Event 不用 Task.cancel() — 避免资源泄漏和状态不一致
+- 错误分类保守策略：未知错误默认 non-retryable — 防止 retry storm
+- retry 端点 max 3 次限制 — 防止无效重试打垮服务器
+- decision 字段白名单 + mask_sensitive — 防止敏感信息泄漏
+- 前端用 fetch+ReadableStream 不用 EventSource — POST 端点 + API Key 认证
