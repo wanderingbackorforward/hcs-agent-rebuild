@@ -4,6 +4,7 @@ from .task_classifier import TaskClassifier
 from .agent_router import AgentRouter
 from .unrelated_handler import UnrelatedHandler
 from .classification_processor import ClassificationProcessor
+from .semantic_checker import SemanticChecker
 
 __all__ = [
     "StateManager",
@@ -11,4 +12,5 @@ __all__ = [
     "AgentRouter",
     "UnrelatedHandler",
     "ClassificationProcessor",
+    "SemanticChecker",
 ]

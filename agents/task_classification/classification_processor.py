@@ -21,6 +21,7 @@ from typing import AsyncGenerator
 from config.audit import audit_event
 from agents.context_lock import ContextLock, load_lock, save_lock, clear_lock
 from agents.task_classification.json_utils import parse_classification_json
+from agents.task_classification.semantic_checker import SemanticChecker
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +41,14 @@ CONFIDENCE_THRESHOLD = 0.5
 
 class ClassificationProcessor:
     def __init__(self, classifier, state_manager, router, unrelated_handler,
-                 session_repo=None, llm=None):
+                 session_repo=None, llm=None, semantic_checker=None):
         self.classifier = classifier
         self.state_manager = state_manager
         self.router = router
         self.unrelated_handler = unrelated_handler
         self.repo = session_repo
         self.llm = llm
+        self.semantic_checker = semantic_checker or SemanticChecker()
 
     async def process_task_stream(self, user_input: str, session_id: str = None) -> AsyncGenerator[str, None]:
         sid = session_id or ""
@@ -131,7 +133,15 @@ class ClassificationProcessor:
             return False
         if len(t) <= 8 or any(w in t for w in REFERENCE_WORDS):
             return True
-        # same-domain signal for the locked intent
+        # Semantic similarity check (embedding-based, replaces keyword matching).
+        if self.semantic_checker and self.semantic_checker.is_available:
+            result = await self.semantic_checker.check_continuation(t, lock)
+            if result is not None:
+                audit_event(layer="orchestrator", event_type="semantic_continuation",
+                            message="sim_check intent={} result={}".format(lock.intent, result),
+                            data={"intent": lock.intent, "semantic_result": result})
+                return result
+        # Fallback: same-domain signal for the locked intent
         if lock.intent == "environment_match" and self._has_signal(t, ENV_SIGNAL):
             return True
         if lock.intent == "knowledge_qa" and self._has_signal(t, KB_SIGNAL):

@@ -1,7 +1,7 @@
 """Task classification agent - main controller that orchestrates intent routing."""
 import logging
 
-from config.model_provider import create_chat_model
+from config.model_provider import create_chat_model, create_embedding_model
 from config.constants import SharedState
 from db.db_router import DatabaseRouter
 from agents.task_classification import (
@@ -11,6 +11,7 @@ from agents.task_classification import (
     UnrelatedHandler,
     ClassificationProcessor,
 )
+from agents.task_classification.semantic_checker import SemanticChecker
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +23,19 @@ class TaskClassificationAgent:
         self.llm = create_chat_model(temperature=0)
         self.db = db_router or DatabaseRouter()
 
+        # Create embedder for semantic continuation check (graceful on failure).
+        try:
+            embedder = create_embedding_model()
+        except Exception as e:
+            logger.warning("Embedding model unavailable, semantic check disabled: %s", e)
+            embedder = None
+
         shared_state = SharedState()
         self.state_manager = StateManager(shared_state)
         self.task_classifier = TaskClassifier(self.llm)
         self.agent_router = AgentRouter(environment_agent, knowledge_agent, self.state_manager)
         self.unrelated_handler = UnrelatedHandler(self.state_manager)
+        self.semantic_checker = SemanticChecker(embedder=embedder)
         self.classification_processor = ClassificationProcessor(
             self.task_classifier,
             self.state_manager,
@@ -34,6 +43,7 @@ class TaskClassificationAgent:
             self.unrelated_handler,
             session_repo=self.db.session,
             llm=self.llm,
+            semantic_checker=self.semantic_checker,
         )
 
         # Wire cross-agent callbacks
