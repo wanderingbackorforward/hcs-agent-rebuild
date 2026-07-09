@@ -58,7 +58,7 @@ class ClassificationProcessor:
             return
 
         # L2: continuation check.
-        if lock.is_active and self._is_continuation(user_input, lock):
+        if lock.is_active and await self._is_continuation(user_input, lock):
             # L3: confidence check — multi-intent conflict / vague.
             score, issue, question = self._assess_confidence(user_input, lock)
             if score < CONFIDENCE_THRESHOLD:
@@ -85,7 +85,8 @@ class ClassificationProcessor:
     async def _full_classify_route(self, user_input, sid, lock):
         """Step 6: full LLM classification, update/overwrite lock, route."""
         raw = ""
-        async for token in self.classifier.classify_stream(user_input):
+        history = self._load_history(sid)
+        async for token in self.classifier.classify_stream(user_input, history=history):
             raw += token
         result = self._parse_json(raw)
         intent_type = result.get("intent_type", "knowledge_qa")
@@ -110,7 +111,7 @@ class ClassificationProcessor:
     def _is_switch(self, text: str) -> bool:
         return any(w in text.strip() for w in SWITCH_WORDS)
 
-    def _is_continuation(self, text: str, lock: ContextLock) -> bool:
+    async def _is_continuation(self, text: str, lock: ContextLock) -> bool:
         t = text.strip()
         if self._is_switch(t):
             return False
@@ -121,7 +122,7 @@ class ClassificationProcessor:
             return True
         if lock.intent == "knowledge_qa" and self._has_signal(t, KB_SIGNAL):
             return True
-        return self._llm_judge(t, lock)
+        return await self._llm_judge(t, lock)
 
     # ---- L3: confidence assessment (0 cost, no extra LLM) ----
     def _assess_confidence(self, text: str, lock: ContextLock):
@@ -151,7 +152,7 @@ class ClassificationProcessor:
         refs = ("那个", "这个", "换一个", "再来一个")
         return any(text == w or text.startswith(w) for w in refs)
 
-    def _llm_judge(self, text: str, lock: ContextLock) -> bool:
+    async def _llm_judge(self, text: str, lock: ContextLock) -> bool:
         if not self.llm:
             return False  # conservative: no llm -> re-classify
         try:
@@ -160,11 +161,20 @@ class ClassificationProcessor:
             prompt = tmpl.format(intent=lock.intent,
                                  params=json.dumps(lock.params, ensure_ascii=False),
                                  input=text)
-            resp = self.llm.invoke([HumanMessage(content=prompt)])
+            resp = await self.llm.ainvoke([HumanMessage(content=prompt)])
             return resp.content.strip().startswith("是")
         except Exception as e:
             logger.warning("lock LLM judge failed: %s", e)
             return False
+
+    def _load_history(self, sid: str) -> list:
+        """Load recent chat history from session repo for classifier context."""
+        if not self.repo or not sid:
+            return []
+        try:
+            return self.repo.get_history(sid)
+        except Exception:
+            return []
 
     def _parse_json(self, text: str) -> dict:
         try:

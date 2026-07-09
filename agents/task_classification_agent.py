@@ -57,15 +57,19 @@ class TaskClassificationAgent:
             result += token
         return result
 
-    async def handle_unrelated(self, user_input: str):
+    async def handle_unrelated(self, user_input: str, session_id: str = None):
         logger.info(f"Re-classifying: {user_input}")
         result = ""
-        async for token in self.classification_processor.process_task_stream(user_input):
+        async for token in self.classification_processor.process_task_stream(
+            user_input, session_id=session_id
+        ):
             result += token
         return result
 
-    async def handle_unrelated_async(self, user_input: str):
-        async for token in self.classification_processor.process_task_stream(user_input):
+    async def handle_unrelated_async(self, user_input: str, session_id: str = None):
+        async for token in self.classification_processor.process_task_stream(
+            user_input, session_id=session_id
+        ):
             yield token
 
     def reset_conversation(self):
