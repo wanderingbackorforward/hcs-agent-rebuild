@@ -1,15 +1,16 @@
 """Classification processor - orchestrates classify -> route -> respond pipeline.
 
-Three-layer context-lock gate (per the lightweight-complete plan):
+Three-layer context-lock gate (reordered for safety):
 
   L1  switch-word fast intercept (0 cost) -> clear lock, full classify
-  L2  continuation check (short/ref/same-domain, else LLM judge)
+  L2  confidence pre-check (multi-intent conflict / vague) -> clarify, don't execute
+  L3  continuation check (short/ref/same-domain, else LLM judge)
       -> reuse lock, skip re-classification
-  L3  confidence check (multi-intent conflict / vague) -> clarify, don't execute
 
-High-confidence single-intent follow-ups route directly (no classify LLM).
-No-lock / switch / new-intent goes through full classification and updates
-the lock. Judgment lives here (entry point, one place); persistence is in
+Confidence is checked BEFORE continuation so that ambiguous inputs are
+filtered out before L3 makes a routing decision on them.  This prevents
+L3 from misjudging a multi-intent or vague input as a simple continuation.
+Judgment lives here (entry point, one place); persistence is in
 agents.context_lock.
 """
 import json
@@ -57,9 +58,9 @@ class ClassificationProcessor:
                 yield t
             return
 
-        # L2: continuation check.
-        if lock.is_active and await self._is_continuation(user_input, lock):
-            # L3: confidence check — multi-intent conflict / vague.
+        # L2: confidence pre-check — filter ambiguous inputs before L3.
+        # Only relevant when a lock is active (no lock -> full classify anyway).
+        if lock.is_active:
             score, issue, question = self._assess_confidence(user_input, lock)
             if score < CONFIDENCE_THRESHOLD:
                 audit_event(layer="orchestrator", event_type="low_confidence_clarify",
@@ -67,6 +68,9 @@ class ClassificationProcessor:
                             data={"issue": issue, "score": score, "input": user_input[:50]})
                 yield question
                 return
+
+        # L3: continuation check (only on inputs that passed L2).
+        if lock.is_active and await self._is_continuation(user_input, lock):
             audit_event(layer="orchestrator", event_type="context_lock_hit",
                         message="reuse locked intent={}".format(lock.intent),
                         data={"intent": lock.intent, "confidence": score})
@@ -75,10 +79,10 @@ class ClassificationProcessor:
                 yield t
             return
 
-        # L2 said "not continuing" with an active lock -> clear it.
+        # L3 said "not continuing" with an active lock -> clear it.
         if lock.is_active:
             clear_lock(self.repo, sid)
-        # Step 6: full classify + route.
+        # Full classify + route.
         async for t in self._full_classify_route(user_input, sid, lock):
             yield t
 
@@ -107,7 +111,7 @@ class ClassificationProcessor:
             async for t in self.router.route(intent_type, user_input, session_id=sid):
                 yield t
 
-    # ---- L1 / L2: switch + continuation ----
+    # ---- L1 / L3: switch + continuation ----
     def _is_switch(self, text: str) -> bool:
         return any(w in text.strip() for w in SWITCH_WORDS)
 
@@ -124,7 +128,7 @@ class ClassificationProcessor:
             return True
         return await self._llm_judge(t, lock)
 
-    # ---- L3: confidence assessment (0 cost, no extra LLM) ----
+    # ---- L2: confidence pre-check (0 cost, no extra LLM) ----
     def _assess_confidence(self, text: str, lock: ContextLock):
         """Return (score, issue, clarify_question). Low score -> ask, don't execute."""
         t = text.strip()
