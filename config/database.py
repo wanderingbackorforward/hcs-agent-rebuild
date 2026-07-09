@@ -1,4 +1,4 @@
-"""Database configuration module."""
+"""Database and Redis configuration module."""
 import os
 
 
@@ -27,4 +27,14 @@ class DatabaseConfig:
         return kwargs
 
 
+class RedisConfig:
+    def __init__(self):
+        self.url = os.getenv("REDIS_URL", "")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url)
+
+
 db_config = DatabaseConfig()
+redis_config = RedisConfig()

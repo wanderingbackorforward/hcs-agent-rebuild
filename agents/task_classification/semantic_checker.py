@@ -10,6 +10,7 @@ import math
 from typing import Optional
 
 from agents.context_lock import ContextLock
+from config.settings import app_settings
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ INTENT_DESCRIPTIONS = {
     "knowledge_qa": "SDK文档 用户手册 技术规范 测试规范 接口说明 安装配置 部署许可证",
 }
 
-DEFAULT_SIMILARITY_THRESHOLD = 0.65
+DEFAULT_SIMILARITY_THRESHOLD = app_settings.semantic_similarity_threshold
 
 
 class SemanticChecker:

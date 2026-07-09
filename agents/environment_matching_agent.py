@@ -5,6 +5,7 @@ import uuid
 from langchain_core.chat_history import InMemoryChatMessageHistory
 
 from config.model_provider import create_chat_model
+from config.settings import app_settings
 from config.audit import audit_event, set_trace_context
 from db.db_router import DatabaseRouter
 from services.environment_service import EnvironmentService
@@ -25,7 +26,7 @@ class EnvironmentMatchingAgent:
                  memory_service=None):
         self.session_id = session_id or str(uuid.uuid4())
         self.db = db_router or DatabaseRouter()
-        self.llm = create_chat_model(temperature=0)
+        self.llm = create_chat_model(temperature=app_settings.llm_temperature)
         self.unrelated_callback = None
 
         self.input_parser = EnvironmentInputParser(self.llm)

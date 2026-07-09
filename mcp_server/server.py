@@ -2,10 +2,11 @@
 import asyncio
 import sys
 
+from config.settings import app_settings
 from mcp_server.protocol_handler import create_mcp_server
 
-SERVER_NAME = "hcs-agent-rebuild"
-SERVER_VERSION = "0.1.0"
+SERVER_NAME = app_settings.mcp_server_name
+SERVER_VERSION = app_settings.app_version
 
 
 def _redirect_all_loggers_to_stderr():
@@ -39,6 +40,16 @@ def run_stdio_server() -> int:
 
 
 def main() -> int:
+    """Run MCP server with transport selected by environment variable.
+
+    MCP_TRANSPORT=stdio (default) -> local CLI mode
+    MCP_TRANSPORT=sse -> remote HTTP+SSE mode
+    """
+    import os
+    transport = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
+    if transport == "sse":
+        from mcp_server.sse_server import run_sse_server
+        return run_sse_server()
     return run_stdio_server()
 
 

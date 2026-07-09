@@ -15,10 +15,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from config.settings import app_settings
+
 logger = logging.getLogger(__name__)
 
 LOCK_KEY = "_context_lock"
-DEFAULT_TTL = 600  # seconds
+DEFAULT_TTL = app_settings.context_lock_ttl
 
 
 @dataclass

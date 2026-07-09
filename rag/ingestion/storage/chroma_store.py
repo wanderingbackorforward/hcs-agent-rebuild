@@ -5,20 +5,22 @@ from typing import List, Dict, Tuple, Optional
 import chromadb
 from chromadb.config import Settings
 
+from config.settings import app_settings
+
 
 class ChromaStore:
-    def __init__(self, collection_name: str = "hcs_knowledge",
-                 persist_directory: str = "./data/chroma"):
-        self.collection_name = collection_name
-        self.persist_directory = persist_directory
-        os.makedirs(persist_directory, exist_ok=True)
+    def __init__(self, collection_name: str = None,
+                 persist_directory: str = None):
+        self.collection_name = collection_name or app_settings.knowledge_collection
+        self.persist_directory = persist_directory or app_settings.chroma_persist_dir
+        os.makedirs(self.persist_directory, exist_ok=True)
         self.client = chromadb.PersistentClient(
-            path=persist_directory,
+            path=self.persist_directory,
             settings=Settings(anonymized_telemetry=False),
         )
         self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"},
+            name=self.collection_name,
+            metadata={"hnsw:space": app_settings.chroma_distance},
         )
 
     def upsert(self, doc_id: str, chunks: List[str], embeddings: List[List[float]],
@@ -36,8 +38,10 @@ class ChromaStore:
             metadatas=metadatas,
         )
 
-    def query(self, query_embedding: List[float], top_k: int = 5,
+    def query(self, query_embedding: List[float], top_k: int = None,
               filters: Dict = None) -> List[Tuple[str, str, float, Dict]]:
+        if top_k is None:
+            top_k = app_settings.retrieval_top_k
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k,
@@ -77,7 +81,7 @@ class ChromaStore:
         """Update metadata for existing documents by ID."""
         self.collection.update(ids=ids, metadatas=[metadata_update] * len(ids))
 
-    def query_with_filter(self, query_embedding: List[float], top_k: int = 5,
+    def query_with_filter(self, query_embedding: List[float], top_k: int = None,
                           where: Dict = None) -> List[Tuple[str, str, float, Dict]]:
         """Query with a metadata filter (alias for query with filters param)."""
         return self.query(query_embedding, top_k=top_k, filters=where)

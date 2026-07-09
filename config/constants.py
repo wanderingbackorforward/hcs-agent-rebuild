@@ -1,6 +1,8 @@
 """Shared constants and state enums."""
 from enum import Enum
 
+from config.settings import app_settings
+
 
 class StateEnum(Enum):
     CLASSIFY = "classify"
@@ -43,4 +45,4 @@ MULTI_INTENT_MARKERS = (
     "顺便", "同时", "另外", "还有", "以及", "再帮我", "再问",
 )
 
-CONFIDENCE_THRESHOLD = 0.5
+CONFIDENCE_THRESHOLD = app_settings.classification_confidence_threshold

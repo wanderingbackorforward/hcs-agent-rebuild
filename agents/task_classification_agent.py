@@ -2,6 +2,7 @@
 import logging
 
 from config.model_provider import create_chat_model, create_embedding_model
+from config.settings import app_settings
 from config.constants import SharedState
 from db.db_router import DatabaseRouter
 from agents.task_classification import (
@@ -20,7 +21,7 @@ class TaskClassificationAgent:
     def __init__(self, environment_agent, knowledge_agent, db_router=None):
         self.environment_agent = environment_agent
         self.knowledge_agent = knowledge_agent
-        self.llm = create_chat_model(temperature=0)
+        self.llm = create_chat_model(temperature=app_settings.llm_temperature)
         self.db = db_router or DatabaseRouter()
 
         # Create embedder for semantic continuation check (graceful on failure).

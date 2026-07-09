@@ -5,15 +5,14 @@ for precise token counting. Context assembly is layered: system prompt,
 long-term memory, summary, recent conversation."
 """
 import logging
-logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOKENS = 6000
-SYSTEM_PROMPT_BUDGET = 500
-RESPONSE_BUDGET = 1000
+from config.settings import app_settings
+
+logger = logging.getLogger(__name__)
 
 try:
     import tiktoken
-    _ENCODER = tiktoken.encoding_for_model("gpt-4")
+    _ENCODER = tiktoken.encoding_for_model(app_settings.tiktoken_model)
     _HAS_TIKTOKEN = True
 except Exception:
     _HAS_TIKTOKEN = False
@@ -30,10 +29,10 @@ def count_tokens(text: str) -> int:
 class ContextManager:
     """Manages context window budget with token counting and overflow handling."""
 
-    def __init__(self, max_tokens: int = DEFAULT_MAX_TOKENS,
+    def __init__(self, max_tokens: int = None,
                  short_term_memory=None, long_term_memory=None,
                  task_memory=None):
-        self.max_tokens = max_tokens
+        self.max_tokens = max_tokens or app_settings.context_max_tokens
         self.short_term = short_term_memory
         self.long_term = long_term_memory
         self.task_memory = task_memory
@@ -41,12 +40,14 @@ class ContextManager:
     def assemble_context(self, system_prompt: str, query: str,
                          max_tokens: int = None) -> dict:
         budget = max_tokens or self.max_tokens
-        available = budget - SYSTEM_PROMPT_BUDGET - RESPONSE_BUDGET
+        available = (budget - app_settings.context_system_budget
+                     - app_settings.context_response_budget)
         overflow = False
 
         memory_context = ""
         if self.long_term:
-            memory_context = self.long_term.get_context(query, top_k=3)
+            memory_context = self.long_term.get_context(
+                query, top_k=app_settings.memory_top_k)
 
         task_context = ""
         if self.task_memory:

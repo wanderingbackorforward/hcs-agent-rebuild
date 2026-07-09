@@ -2,13 +2,16 @@
 import socket
 from typing import List, Dict
 from db.db_router import DatabaseRouter
+from config.settings import app_settings
 
 
 class ProbeService:
     def __init__(self, db_router: DatabaseRouter = None):
         self.db = db_router or DatabaseRouter()
 
-    def probe_port(self, host: str, port: int, timeout: int = 2) -> Dict:
+    def probe_port(self, host: str, port: int, timeout: int = None) -> Dict:
+        if timeout is None:
+            timeout = app_settings.probe_timeout
         try:
             with socket.create_connection((host, port), timeout=timeout):
                 return {"reachable": True, "host": host, "port": port}

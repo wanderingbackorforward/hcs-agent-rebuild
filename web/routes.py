@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.auth import require_api_key
 from api.chat_handler import process_user_input_stream
 from api.rate_limit import rate_limit
+from config.audit import audit_event, mask_sensitive, set_trace_context
 
 router = APIRouter(tags=["Web界面"])
 templates = Jinja2Templates(directory="web/templates")
@@ -89,10 +90,28 @@ async def chat_stream_endpoint(chat: ChatRequest):
     """Handle streaming chat requests."""
     msg = _validate_chat(chat)
     sid = chat.session_id or str(uuid.uuid4())
+    # Propagate session_id into trace context for downstream audit.
+    set_trace_context(session_id=sid)
+    audit_event(
+        layer="bff",
+        event_type="chat_request",
+        message="streaming chat",
+        data={"session_id": sid, "message_length": len(msg)},
+    )
 
     async def token_generator():
-        async for token in process_user_input_stream(msg, session_id=sid):
-            yield token
+        try:
+            async for token in process_user_input_stream(msg, session_id=sid):
+                yield token
+        except Exception as e:
+            audit_event(
+                layer="bff",
+                event_type="error",
+                message=f"stream error: {type(e).__name__}",
+                data={"error": str(e)[:200]},
+                level=40,
+            )
+            yield f"[error] {type(e).__name__}"
 
     return StreamingResponse(token_generator(), media_type="text/plain")
 
@@ -106,7 +125,20 @@ async def chat_endpoint(chat: ChatRequest):
     """Non-streaming chat endpoint."""
     msg = _validate_chat(chat)
     sid = chat.session_id or str(uuid.uuid4())
+    set_trace_context(session_id=sid)
+    audit_event(
+        layer="bff",
+        event_type="chat_request",
+        message="non-streaming chat",
+        data={"session_id": sid, "message_length": len(msg)},
+    )
     result = ""
     async for token in process_user_input_stream(msg, session_id=sid):
         result += token
+    audit_event(
+        layer="bff",
+        event_type="chat_response",
+        message="non-streaming chat done",
+        data={"session_id": sid, "reply_length": len(result)},
+    )
     return {"reply": result, "session_id": sid}

@@ -34,6 +34,7 @@
 - **向量库**：ChromaDB
 - **稀疏检索**：自研 BM25
 - **数据库**：SQLite + SQLAlchemy
+- **缓存/限流**：Redis（可选，用于分布式限流和 LLM 结果缓存）
 - **MCP 协议**：mcp SDK（stdio）
 - **前端**：Jinja2 + 原生 JS（可选）
 
@@ -49,7 +50,7 @@ hcs-agent-rebuild/
 ├── README.md
 ├── config/                         # 配置层
 │   ├── model_provider.py           # 多模型 Provider 工厂
-│   ├── database.py
+│   ├── database.py                # 数据库与 Redis 配置
 │   ├── constants.py
 │   └── settings.py
 ├── db/                             # 数据持久层
@@ -124,3 +125,4 @@ python app.py
 - [x] API / Web 层
 - [x] 测试
 - [x] 文档
+- [ ] Redis 集成（分布式限流、LLM 结果缓存）
