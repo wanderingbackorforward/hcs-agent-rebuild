@@ -111,10 +111,22 @@ class IntentMetric:
     intent: str
     total: int = 0
     correct: int = 0
-    recall: float = 0.0  # correct / total
+    predicted: int = 0  # total times this intent was predicted (column sum)
+    recall: float = 0.0   # correct / total (TP / (TP + FN))
+    precision: float = 0.0  # correct / predicted (TP / (TP + FP))
+    f1: float = 0.0      # 2 * P * R / (P + R)
 
     def compute_recall(self):
         self.recall = self.correct / self.total if self.total > 0 else 0.0
+
+    def compute_precision(self):
+        self.precision = self.correct / self.predicted if self.predicted > 0 else 0.0
+
+    def compute_f1(self):
+        if self.precision + self.recall > 0:
+            self.f1 = 2 * self.precision * self.recall / (self.precision + self.recall)
+        else:
+            self.f1 = 0.0
 
 
 @dataclass
@@ -224,8 +236,17 @@ def evaluate_from_predictions(
 
     result.correct = result.total - len(result.errors)
     result.accuracy = result.correct / result.total if result.total > 0 else 0.0
+
+    # Compute predicted counts (column sums of confusion matrix) for precision.
+    for intent in per_intent:
+        per_intent[intent].predicted = sum(
+            confusion[row].get(intent, 0) for row in confusion
+        )
+
     for m in per_intent.values():
         m.compute_recall()
+        m.compute_precision()
+        m.compute_f1()
     result.per_intent = per_intent
     result.confusion_matrix = confusion
 
@@ -275,14 +296,19 @@ def format_report(result: RoutingEvalResult) -> str:
         f"| 错误路由数 | {len(result.errors)} |",
         f"| **准确率** | **{result.accuracy:.1%}** |",
         "",
-        "## 各意图召回率",
+        "> 注：离线评估通常比线上高 5-10%（线上分布更复杂、有噪声输入）。",
         "",
-        f"| 意图 | 总数 | 正确 | 召回率 |",
-        f"|------|------|------|--------|",
+        "## 各意图 Precision / Recall / F1",
+        "",
+        f"| 意图 | 总数 | 正确 | 预测数 | Precision | Recall | F1 |",
+        f"|------|------|------|--------|-----------|--------|-----|",
     ]
     for intent in sorted(result.per_intent.keys()):
         m = result.per_intent[intent]
-        lines.append(f"| {intent} | {m.total} | {m.correct} | {m.recall:.1%} |")
+        lines.append(
+            f"| {intent} | {m.total} | {m.correct} | {m.predicted} | "
+            f"{m.precision:.1%} | {m.recall:.1%} | {m.f1:.3f} |"
+        )
 
     lines.extend([
         "",

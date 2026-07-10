@@ -139,6 +139,59 @@ class TestRoutingMetricsReplay:
         assert result.per_intent["knowledge_qa"].recall == 0.5
         assert result.per_intent["unrelated"].recall == 0.0
 
+    def test_precision_and_f1(self):
+        """Verify precision and F1 are computed correctly from confusion matrix."""
+        cases = [
+            ("查环境A", "environment_match"),
+            ("查环境B", "environment_match"),
+            ("查文档A", "knowledge_qa"),
+            ("查文档B", "knowledge_qa"),
+        ]
+        # env: 2 correct, predicted 3 (1 kb misclassified as env)
+        # kb: 1 correct, predicted 1 (1 kb misclassified as env)
+        predictions = [
+            ("查环境A", "environment_match", 0.9),
+            ("查环境B", "environment_match", 0.9),
+            ("查文档A", "knowledge_qa", 0.9),
+            ("查文档B", "environment_match", 0.5),  # FP for env
+        ]
+        result = evaluate_from_predictions(cases, predictions)
+
+        env = result.per_intent["environment_match"]
+        assert env.correct == 2
+        assert env.predicted == 3  # 2 correct + 1 FP
+        assert env.precision == pytest.approx(2/3)
+        assert env.recall == 1.0
+        # F1 = 2 * (2/3) * 1 / (2/3 + 1) = (4/3) / (5/3) = 4/5 = 0.8
+        assert env.f1 == pytest.approx(0.8, abs=0.01)
+
+        kb = result.per_intent["knowledge_qa"]
+        assert kb.correct == 1
+        assert kb.predicted == 1
+        assert kb.precision == 1.0
+        assert kb.recall == 0.5
+        # F1 = 2 * 1 * 0.5 / (1 + 0.5) = 1/1.5 = 2/3
+        assert kb.f1 == pytest.approx(2/3, abs=0.01)
+
+    def test_report_includes_f1(self):
+        """format_report includes Precision, Recall, and F1 columns."""
+        predictions = [(q, exp, 0.9) for q, exp in GOLDEN_CASES[:5]]
+        result = evaluate_from_predictions(GOLDEN_CASES[:5], predictions)
+        report = format_report(result)
+
+        assert "Precision" in report
+        assert "F1" in report
+        assert "Recall" in report
+
+    def test_report_includes_offline_note(self):
+        """format_report includes note about offline > online gap."""
+        result = evaluate_from_predictions(GOLDEN_CASES[:3], [
+            (q, exp, 0.9) for q, exp in GOLDEN_CASES[:3]
+        ])
+        report = format_report(result)
+        assert "离线" in report
+        assert "线上" in report
+
     def test_confusion_matrix_structure(self):
         """Confusion matrix has correct dimensions and values."""
         cases = [
@@ -186,7 +239,7 @@ class TestRoutingMetricsReplay:
 
         assert "意图路由准确率评估报告" in report
         assert "总体指标" in report
-        assert "各意图召回率" in report
+        assert "Precision" in report
         assert "混淆矩阵" in report
         assert "100.0%" in report
 

@@ -21,7 +21,7 @@ from typing import AsyncGenerator
 from config.audit import audit_event
 from config.constants import (
     SWITCH_WORDS, REFERENCE_WORDS, ENV_SIGNAL, KB_SIGNAL,
-    MULTI_INTENT_MARKERS, CONFIDENCE_THRESHOLD,
+    MULTI_INTENT_MARKERS, REJECTION_WORDS, CONFIDENCE_THRESHOLD,
 )
 from agents.context_lock import ContextLock, load_lock, save_lock, clear_lock
 from agents.task_classification.json_utils import parse_classification_json
@@ -65,6 +65,19 @@ class ClassificationProcessor:
             clear_lock(self.repo, sid)
             yield SSEEvent.decision(**build_decision("switch"))
             yield SSEEvent.status("classifying", "检测到话题切换，重新理解需求...")
+            async for t in self._full_classify_route(user_input, sid, lock, task_id):
+                yield t
+            return
+
+        # L1.5: user rejection detection — collect negative samples.
+        # If the user denies the previous routing result, record it as a
+        # negative sample for future Few-Shot / fine-tuning improvement.
+        if lock.is_active and self._is_rejection(user_input):
+            self._record_negative_sample(
+                user_input, lock.intent, "user_rejection", sid)
+            clear_lock(self.repo, sid)
+            yield SSEEvent.decision(**build_decision("rejection"))
+            yield SSEEvent.status("classifying", "检测到路由纠正，重新理解需求...")
             async for t in self._full_classify_route(user_input, sid, lock, task_id):
                 yield t
             return
@@ -151,6 +164,8 @@ class ClassificationProcessor:
                               "llm_confidence": confidence})
             if nli_score < NLI_BORDERLINE_THRESHOLD:
                 # NLI says query doesn't match selected agent → fallback.
+                self._record_negative_sample(
+                    user_input, intent_type, "nli_reject", sid)
                 yield SSEEvent.decision(**build_decision(
                     "nli_reject", intent_type=intent_type,
                     confidence=confidence, nli_score=nli_score,
@@ -219,6 +234,42 @@ class ClassificationProcessor:
     # ---- L1 / L3: switch + continuation ----
     def _is_switch(self, text: str) -> bool:
         return any(w in text.strip() for w in SWITCH_WORDS)
+
+    @staticmethod
+    def _is_rejection(text: str) -> bool:
+        """Detect when user denies the previous routing result."""
+        return any(w in text.strip() for w in REJECTION_WORDS)
+
+    @staticmethod
+    def _record_negative_sample(
+        query: str, routed_intent: str, reason: str, sid: str = "",
+    ):
+        """Record a negative sample for future Few-Shot / fine-tuning.
+
+        Two sources:
+          - user_rejection: user explicitly denies the routing result
+          - nli_reject: NLI validator caught a routing mismatch
+        """
+        # Audit log (always — for offline analysis from logs).
+        audit_event(
+            layer="orchestrator",
+            event_type="negative_sample",
+            message="reason={} routed_intent={} query={}".format(
+                reason, routed_intent, query[:50]),
+            data={
+                "reason": reason,
+                "routed_intent": routed_intent,
+                "query": query[:200],
+                "session_id": sid,
+            },
+        )
+        # Feed online evaluator (if attached — production only).
+        try:
+            from eval.online import get_evaluator
+            ev = get_evaluator()
+            ev.record_negative_sample(query, routed_intent, reason, sid)
+        except Exception:
+            pass  # no evaluator attached (test/dev mode)
 
     async def _is_continuation(self, text: str, lock: ContextLock) -> bool:
         t = text.strip()

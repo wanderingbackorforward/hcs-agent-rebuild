@@ -154,6 +154,62 @@ class TestDegradationPath:
         assert ClassificationProcessor._check_agent_keyword("anything", "unrelated") is True
 
 
+class TestRejectionDetection:
+    """Tests for user rejection detection and negative sample collection."""
+
+    def test_rejection_words_detected(self):
+        """_is_rejection returns True for rejection signals."""
+        from agents.task_classification.classification_processor import ClassificationProcessor
+        assert ClassificationProcessor._is_rejection("不是") is True
+        assert ClassificationProcessor._is_rejection("错了，我要查文档") is True
+        assert ClassificationProcessor._is_rejection("不是这个环境") is True
+
+    def test_non_rejection_not_triggered(self):
+        """_is_rejection returns False for normal queries."""
+        from agents.task_classification.classification_processor import ClassificationProcessor
+        assert ClassificationProcessor._is_rejection("帮我查环境") is False
+        assert ClassificationProcessor._is_rejection("HCS SDK怎么安装") is False
+
+    def test_negative_sample_records_both_sources(self):
+        """_record_negative_sample handles both user_rejection and nli_reject."""
+        from agents.task_classification.classification_processor import ClassificationProcessor
+        # Should not raise — audit + online evaluator feed.
+        ClassificationProcessor._record_negative_sample(
+            "不是我要的", "knowledge_qa", "user_rejection", "sess-1")
+        ClassificationProcessor._record_negative_sample(
+            "查环境", "knowledge_qa", "nli_reject", "sess-2")
+
+
+class TestOnlineNegativeSamples:
+    """Tests for OnlineEvaluator negative sample collection."""
+
+    def test_record_and_retrieve_negative_samples(self):
+        from eval.online import OnlineEvaluator
+        ev = OnlineEvaluator()
+        ev.record_negative_sample("query1", "knowledge_qa", "user_rejection")
+        ev.record_negative_sample("query2", "environment_match", "nli_reject")
+
+        samples = ev.recent_negative_samples()
+        assert len(samples) == 2
+        assert samples[0]["reason"] == "user_rejection"
+        assert samples[1]["reason"] == "nli_reject"
+
+    def test_negative_samples_cap(self):
+        from eval.online import OnlineEvaluator
+        ev = OnlineEvaluator()
+        for i in range(50):
+            ev.record_negative_sample(f"q{i}", "knowledge_qa", "user_rejection")
+        assert len(ev.recent_negative_samples(limit=100)) == 50
+
+    def test_offline_online_gap(self):
+        from eval.online import OnlineEvaluator
+        ev = OnlineEvaluator()
+        ev.set_offline_accuracy(0.945)
+        # snapshot with no traces returns no_data, but offline_accuracy is stored
+        snap = ev.snapshot()
+        assert snap["status"] == "no_data"
+
+
 # --------------------------------------------------------------------------- #
 # 3. Decision explainer NLI paths
 # --------------------------------------------------------------------------- #

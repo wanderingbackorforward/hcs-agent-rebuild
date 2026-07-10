@@ -45,4 +45,11 @@ MULTI_INTENT_MARKERS = (
     "顺便", "同时", "另外", "还有", "以及", "再帮我", "再问",
 )
 
+# User rejection signals — when the user denies the previous routing result.
+# These indicate the routing was wrong and should be collected as negative samples.
+REJECTION_WORDS = (
+    "不是", "错了", "不对", "不是这个", "不是我要的", "搞错了",
+    "应该是", "我要问的是", "我想查的是",
+)
+
 CONFIDENCE_THRESHOLD = app_settings.classification_confidence_threshold

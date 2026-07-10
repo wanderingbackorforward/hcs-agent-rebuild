@@ -28,6 +28,7 @@ _SAFE_FIELDS = {
 # Human-readable explanation templates keyed by decision path.
 _TEMPLATES = {
     "switch": "检测到话题切换关键词，重新分类意图",
+    "rejection": "检测到用户否定路由结果，记录负样本并重新分类",
     "clarify_multi": "输入同时涉及多个意图，需要澄清",
     "clarify_vague": "输入信息不足，需要补充细节",
     "lock_hit": "延续上轮对话，复用已有意图：{intent}",
