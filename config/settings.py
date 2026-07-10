@@ -128,6 +128,16 @@ class AppSettings:
         "SEMANTIC_SIMILARITY_THRESHOLD", 0.65
     )
 
+    # ---- NLI (Natural Language Inference) confidence gate ----
+    # When True and an embedder is available, NLIValidator checks whether
+    # the user query matches the selected agent's responsibility after LLM
+    # routing.  Set to False to disable (falls back to v1 LLM-only logic).
+    enable_nli: bool = _env_bool("ENABLE_NLI", True)
+    nli_pass_threshold: float = _env_float("NLI_PASS_THRESHOLD", 0.7)
+    nli_borderline_threshold: float = _env_float("NLI_BORDERLINE_THRESHOLD", 0.6)
+    # Degradation fallback: LLM self-confidence must be >= this when NLI is off.
+    nli_fallback_confidence: float = _env_float("NLI_FALLBACK_CONFIDENCE", 0.8)
+
     # ---- Code review ----
     code_review_chunk_size: int = _env_int("CODE_REVIEW_CHUNK_SIZE", 3000)
     code_review_chunk_overlap: int = _env_int("CODE_REVIEW_CHUNK_OVERLAP", 200)

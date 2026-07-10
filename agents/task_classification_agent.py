@@ -13,6 +13,7 @@ from agents.task_classification import (
     ClassificationProcessor,
 )
 from agents.task_classification.semantic_checker import SemanticChecker
+from agents.task_classification.nli_validator import NLIValidator
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class TaskClassificationAgent:
         self.agent_router = AgentRouter(environment_agent, knowledge_agent, self.state_manager)
         self.unrelated_handler = UnrelatedHandler(self.state_manager)
         self.semantic_checker = SemanticChecker(embedder=embedder)
+        self.nli_validator = NLIValidator(embedder=embedder)
         self.classification_processor = ClassificationProcessor(
             self.task_classifier,
             self.state_manager,
@@ -45,6 +47,7 @@ class TaskClassificationAgent:
             session_repo=self.db.session,
             llm=self.llm,
             semantic_checker=self.semantic_checker,
+            nli_validator=self.nli_validator,
         )
 
         # Wire cross-agent callbacks

@@ -10,6 +10,9 @@ Decision paths covered:
   continuation   — L3 semantic continuation
   classified     — full LLM classification result
   low_confidence — classification below threshold
+  nli_pass       — NLI confidence gate passed (≥ 0.7)
+  nli_borderline — NLI score in borderline zone (0.6–0.7)
+  nli_reject     — NLI confidence gate failed (< 0.6)
 """
 from typing import Any
 
@@ -19,7 +22,7 @@ from config.audit import mask_sensitive
 # Anything not in this set is stripped before emission.
 _SAFE_FIELDS = {
     "intent_type", "confidence", "reason", "agent",
-    "context_lock_status", "score", "stage",
+    "context_lock_status", "score", "stage", "nli_score",
 }
 
 # Human-readable explanation templates keyed by decision path.
@@ -31,6 +34,9 @@ _TEMPLATES = {
     "continuation": "语义相似度 {score}，判定为延续对话",
     "classified": "意图分类：{intent}（置信度 {confidence:.0%}），路由到 {agent}",
     "low_confidence": "意图不明确（置信度 {confidence:.0%}），需要澄清",
+    "nli_pass": "NLI 校验通过（{nli_score:.2f}），确认路由到 {agent}",
+    "nli_borderline": "NLI 校验边界（{nli_score:.2f}），谨慎路由到 {agent}",
+    "nli_reject": "NLI 校验未通过（{nli_score:.2f}），路由失败",
 }
 
 
@@ -41,17 +47,19 @@ def build_decision(
     agent: str = "",
     score: float = 0.0,
     context_lock_status: str = "",
+    nli_score: float = None,
     **extra: Any,
 ) -> dict[str, Any]:
     """Build a user-facing decision explanation dict.
 
     Returns ``{explanation, intent_type, confidence, reason, agent,
-    context_lock_status}`` with sensitive fields stripped.
+    context_lock_status, nli_score}`` with sensitive fields stripped.
     """
     tmpl = _TEMPLATES.get(path, "")
     explanation = tmpl.format(
         intent=intent_type, confidence=confidence,
         agent=agent, score=score,
+        nli_score=nli_score if nli_score is not None else 0.0,
     ) if tmpl else path
 
     raw = {
@@ -62,6 +70,7 @@ def build_decision(
         "agent": agent,
         "context_lock_status": context_lock_status,
         "score": round(score, 3) if score else None,
+        "nli_score": round(nli_score, 3) if nli_score is not None else None,
         **extra,
     }
     # Strip non-whitelisted fields + mask any sensitive values.

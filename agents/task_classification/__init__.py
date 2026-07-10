@@ -5,6 +5,7 @@ from .agent_router import AgentRouter
 from .unrelated_handler import UnrelatedHandler
 from .classification_processor import ClassificationProcessor
 from .semantic_checker import SemanticChecker
+from .nli_validator import NLIValidator
 
 __all__ = [
     "StateManager",
@@ -13,4 +14,5 @@ __all__ = [
     "UnrelatedHandler",
     "ClassificationProcessor",
     "SemanticChecker",
+    "NLIValidator",
 ]

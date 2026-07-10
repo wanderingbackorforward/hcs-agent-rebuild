@@ -26,6 +26,8 @@ from config.constants import (
 from agents.context_lock import ContextLock, load_lock, save_lock, clear_lock
 from agents.task_classification.json_utils import parse_classification_json
 from agents.task_classification.semantic_checker import SemanticChecker
+from agents.task_classification.nli_validator import NLIValidator, NLI_PASS_THRESHOLD, NLI_BORDERLINE_THRESHOLD
+from config.settings import app_settings
 from config.sse_protocol import SSEEvent
 from config.decision_explainer import build_decision, agent_display_name
 
@@ -36,7 +38,8 @@ _PROMPTS = Path(__file__).parent.parent.parent / "prompts"
 
 class ClassificationProcessor:
     def __init__(self, classifier, state_manager, router, unrelated_handler,
-                 session_repo=None, llm=None, semantic_checker=None):
+                 session_repo=None, llm=None, semantic_checker=None,
+                 nli_validator=None):
         self.classifier = classifier
         self.state_manager = state_manager
         self.router = router
@@ -44,6 +47,7 @@ class ClassificationProcessor:
         self.repo = session_repo
         self.llm = llm
         self.semantic_checker = semantic_checker or SemanticChecker()
+        self.nli_validator = nli_validator or NLIValidator()
 
     async def process_task_stream(
         self, user_input: str, session_id: str = None,
@@ -129,6 +133,57 @@ class ClassificationProcessor:
             ))
             yield "我不太确定您的需求。您是想查询/匹配测试环境，还是询问技术文档和规范方面的问题？请稍作补充。"
             return
+
+        # ---- Step 4: NLI confidence gate (pluggable) ----
+        # LLM has selected an agent. NLI independently checks whether the query
+        # matches that agent's responsibility. NLI does NOT participate in
+        # selection — it only provides an objective confidence score.
+        nli_score = None
+        if intent_type != "unrelated":
+            nli_score = await self.nli_validator.nli_check(user_input, intent_type)
+
+        if nli_score is not None:
+            # NLI available — use objective score for routing decision.
+            audit_event(layer="orchestrator", event_type="nli_check",
+                        message="agent={} nli_score={:.3f} llm_conf={:.2f}".format(
+                            intent_type, nli_score, confidence),
+                        data={"intent_type": intent_type, "nli_score": nli_score,
+                              "llm_confidence": confidence})
+            if nli_score < NLI_BORDERLINE_THRESHOLD:
+                # NLI says query doesn't match selected agent → fallback.
+                yield SSEEvent.decision(**build_decision(
+                    "nli_reject", intent_type=intent_type,
+                    confidence=confidence, nli_score=nli_score,
+                ))
+                yield "抱歉，我无法准确匹配您的需求到对应的处理能力。请尝试更明确地描述您是想查询/匹配测试环境，还是询问技术文档和规范方面的问题。"
+                return
+            # Score in [borderline, pass) → route but flag as low-confidence.
+            if nli_score < NLI_PASS_THRESHOLD:
+                yield SSEEvent.decision(**build_decision(
+                    "nli_borderline", intent_type=intent_type,
+                    confidence=confidence, nli_score=nli_score,
+                ))
+            else:
+                yield SSEEvent.decision(**build_decision(
+                    "nli_pass", intent_type=intent_type,
+                    confidence=confidence, nli_score=nli_score,
+                ))
+        else:
+            # NLI unavailable (disabled or no embedder) → degradation path:
+            # LLM self-confidence + keyword cross-check.
+            keyword_hit = self._check_agent_keyword(user_input, intent_type)
+            if confidence < app_settings.nli_fallback_confidence or not keyword_hit:
+                audit_event(layer="orchestrator", event_type="nli_fallback_clarify",
+                            message="degraded llm_conf={:.2f} kw_hit={}".format(
+                                confidence, keyword_hit),
+                            data={"intent_type": intent_type,
+                                  "llm_confidence": confidence,
+                                  "keyword_hit": keyword_hit})
+                yield SSEEvent.decision(**build_decision(
+                    "low_confidence", intent_type=intent_type, confidence=confidence,
+                ))
+                yield "我不太确定您的需求。您是想查询/匹配测试环境，还是询问技术文档和规范方面的问题？请稍作补充。"
+                return
         # Emit classified decision event for user-facing explainability.
         yield SSEEvent.decision(**build_decision(
             "classified", intent_type=intent_type, confidence=confidence,
@@ -208,6 +263,17 @@ class ClassificationProcessor:
     def _has_signal(text: str, words) -> bool:
         low = text.lower()
         return any(w in low for w in words)
+
+    @staticmethod
+    def _check_agent_keyword(text: str, intent_type: str) -> bool:
+        """Degradation helper: check if query contains keywords for the
+        selected agent. Used when NLI is unavailable."""
+        low = text.lower()
+        if intent_type == "environment_match":
+            return any(w in low for w in ENV_SIGNAL)
+        if intent_type == "knowledge_qa":
+            return any(w in low for w in KB_SIGNAL)
+        return True  # unrelated doesn't need keyword check
 
     @staticmethod
     def _is_pure_reference(text: str) -> bool:
