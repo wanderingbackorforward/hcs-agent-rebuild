@@ -32,6 +32,11 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Canonical intent labels.
+# To add a new intent:
+#   1. Add it here and to AGENT_DESCRIPTIONS in nli_validator.py
+#   2. Add golden cases below (recall + boundary confusion)
+#   3. Add a router branch in agent_router.py and a display name in decision_explainer.py
+#   4. Run full golden set — old intent accuracy must not drop (regression gate)
 INTENTS = ("environment_match", "knowledge_qa", "unrelated")
 
 

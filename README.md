@@ -211,6 +211,44 @@ python -m pytest tests/test_task_classification_agent.py -v
 
 ---
 
+## 新增意图类别扩展指南
+
+当 Agent 数量从 2 个扩展到更多时，按以下 4 步操作，已有意图路由不受影响。
+
+### 扩展步骤
+
+1. **Prompt 加新类别描述**：在 `prompts/classification_v1.txt` 的 `intent_type` 取值中新增类别，附 2-3 条示例
+2. **新建子 Agent**：在 `agents/` 下新建 Agent 模块，在 `agent_router.py` 加路由分支，在 `decision_explainer.py` 加显示名
+3. **NLI 描述注册**：在 `nli_validator.py` 的 `AGENT_DESCRIPTIONS` 加新意图的职责描述
+4. **Golden Test 补充**：在 `eval/intent_routing_eval.py` 的 `GOLDEN_CASES` 加新意图用例，`INTENTS` 元组加新标签
+
+### 测试重点（按优先级）
+
+| 优先级 | 测试类型 | 做什么 | 防什么 |
+|--------|---------|--------|--------|
+| P0 | **边界混淆用例** | 补新旧意图与老意图职责重叠的模糊 case（如"慢查询日志"既沾数据库又沾日志分析） | 新类别抢老意图流量、老意图错进新类别 |
+| P1 | **新意图召回用例** | 补新意图的口语化、长尾变体表达，验证识别率 | 加了新类别但识别不出来，全漏去老意图 |
+| P2 | **老意图全量回归** | 跑通原有 55 条 Golden Test，确认准确率无下降 | 加新类别带崩原有路由效果 |
+
+```bash
+# 跑全量回归（含新意图用例）
+python -m pytest tests/test_task_classification_agent.py -v
+
+# 只看老意图是否受影响（replay 模式，无需 API Key）
+python -m pytest tests/test_task_classification_agent.py::TestRoutingMetricsReplay -v
+```
+
+### 多 Agent 扩容路径
+
+| Agent 数量 | 架构 | 改动 |
+|-----------|------|------|
+| 2-5 | 当前方案直接适用 | 只需 4 步扩展 + Golden Test |
+| >5 | Step 4 前插入 Embedding 粗筛层 | 预生成所有 Agent 职责 Embedding，用 query 召回 Top-3 候选，再走 LLM 选型 + NLI 校验 |
+
+NLI 校验器已预留多 Agent 接口：`AGENT_DESCRIPTIONS` 字典加条目即可，`nli_check()` 自动处理。
+
+---
+
 ## 当前状态
 
 - [x] 项目骨架
