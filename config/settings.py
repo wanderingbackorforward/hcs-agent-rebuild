@@ -104,6 +104,16 @@ class AppSettings:
     # ---- ReAct ----
     react_max_iterations: int = _env_int("REACT_MAX_ITERATIONS", 5)
 
+    # ---- Chunk quality guard ----
+    # Rule-based pre-filter before embedding. Off by default; enable for
+    # large-document ingestion to avoid wasting embedding calls on clean chunks.
+    chunk_guard_enabled: bool = _env_bool("CHUNK_GUARD_ENABLED", False)
+    chunk_guard_min_chars: int = _env_int("CHUNK_GUARD_MIN_CHARS", 300)
+    chunk_guard_min_separators: int = _env_int("CHUNK_GUARD_MIN_SEPARATORS", 2)
+    chunk_guard_resplit_threshold: float = _env_float(
+        "CHUNK_GUARD_RESPLIT_THRESHOLD", 0.45
+    )
+
     # ---- Cache TTLs ----
     llm_cache_ttl: int = _env_int("LLM_CACHE_TTL", 1800)
     tool_cache_ttl: int = _env_int("TOOL_CACHE_TTL", 600)

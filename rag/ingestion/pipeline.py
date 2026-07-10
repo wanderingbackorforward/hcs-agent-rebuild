@@ -2,11 +2,12 @@
 import hashlib
 import logging
 import os
-from typing import List
+from typing import List, Optional
 from rag.ingestion.chunking.chunker import TextChunker
+from rag.ingestion.chunking.quality_guard import ChunkQualityGuard
 from rag.ingestion.embedding.embedder import Embedder
 from rag.ingestion.storage.chroma_store import ChromaStore
-from config.chunker_factory import create_chunker
+from config.chunker_factory import create_chunker, create_quality_guard
 from config.vector_store_factory import create_vector_store
 
 logger = logging.getLogger(__name__)
@@ -18,10 +19,11 @@ def _content_hash(content: str) -> str:
 
 class IngestionPipeline:
     def __init__(self, store: ChromaStore = None, chunker: TextChunker = None,
-                 embedder: Embedder = None):
+                 embedder: Embedder = None, guard: Optional[ChunkQualityGuard] = None):
         self.store = store or create_vector_store()
         self.chunker = chunker or create_chunker()
         self.embedder = embedder or Embedder()
+        self.guard = guard if guard is not None else create_quality_guard()
 
     def ingest_text(self, content: str, doc_id: str = None, category: str = "spec",
                     title: str = None, source: str = None) -> str:
@@ -31,6 +33,13 @@ class IngestionPipeline:
             logger.info(f"ingest_text: skip duplicate doc_id={effective_id}")
             return effective_id
         chunks = self.chunker.split(content)
+        # Rule-based pre-filter: only suspicious chunks pay an embedding cost
+        # for re-splitting; clean chunks pass straight through (zero embedding).
+        chunks, assessments = self.guard.process(chunks, self.embedder)
+        if self.guard.enabled and any(a.suspicious for a in assessments):
+            flagged = sum(1 for a in assessments if a.suspicious)
+            logger.info("ingest_text: guard flagged %d/%d chunks, %d segments after re-split",
+                        flagged, len(assessments), len(chunks))
         embeddings = self.embedder.embed_batch(chunks)
         metadatas = [
             {
