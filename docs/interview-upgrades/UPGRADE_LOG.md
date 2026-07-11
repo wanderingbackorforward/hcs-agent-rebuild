@@ -418,3 +418,22 @@
 **结果**：
 - `get_document_summary` 现在可以作为查询子 Agent 的文档级查看接口，后续不需要再解析文本摘要。
 - 三个 MCP Tool 的结构化升级已经全部完成。
+
+### 2026-07-11 架构定稿：KnowledgeQAAgent 过渡期版本
+
+**背景**：3 个 MCP Tool 已完成结构化升级，但查询子 Agent 还没有真正切到工具驱动。这个阶段不应该直接上 ReAct 或大改实现，而应该先把过渡期架构边界定死。
+
+**本次定稿结论**：
+1. 主路径：`KnowledgeQAAgent -> MCP Tool`
+2. fallback：保留原 `KnowledgeRetriever -> KnowledgeService`，但只做兜底
+3. 最小多步策略：`list -> query -> summary`
+4. 暂不上 `ReActLoop`
+5. 不再给旧直连链路增加新能力
+
+**设计原则**：
+- 工具调用仍然发生在查询子 Agent 内部，不上提到顶层分流器。
+- 不直接 import tool handler，而是统一走 `ProtocolHandler.execute_tool()`。
+- 先实现确定性的最小多步工具策略，再谈显式状态、循环和自由规划。
+
+**产物**：
+- 新增《`KnowledgeQAAgent过渡期架构方案.md`》，作为后续实现与提交的边界文档。
