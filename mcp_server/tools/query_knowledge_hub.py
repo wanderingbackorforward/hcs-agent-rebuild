@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage
 from mcp_server.errors import MCPError, format_error
 from cache.registry import get_tool_cache
 from prompts.loader import load_prompt
+from config.audit import sanitize_text
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,7 @@ async def query_knowledge_hub_handler(
                 answer = full.strip()
                 payload["answer_generated_by"] = "llm" if answer else "none"
             except Exception as e:
-                logger.warning(f"LLM answer generation failed: {e}")
+                logger.warning(f"LLM answer generation failed: {sanitize_text(str(e))}")
                 answer = "根据知识库检索结果，请优先查看 returned chunks 中的候选证据。"
                 payload["answer_generated_by"] = "fallback"
             payload["answer"] = answer

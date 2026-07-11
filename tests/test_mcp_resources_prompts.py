@@ -186,7 +186,9 @@ class TestPromptRender:
             ],
             handler=lambda val: f"got {val}",
         )
-        with pytest.raises(TypeError):
+        # Missing required arg now raises a sanitized ValueError (not raw
+        # TypeError) to prevent leaking internal exception details to stdout.
+        with pytest.raises(ValueError, match="Failed to render prompt 'needs-arg'"):
             asyncio.run(handler.get_prompt("needs-arg", {}))
 
     def test_rag_answer_prompt_renders_template(self, populated_handler):

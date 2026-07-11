@@ -3,12 +3,18 @@
 MCP tool handlers MUST NOT leak raw exceptions back to the LLM/Host.
 Use MCPError for expected failures; let unexpected ones still log via
 logger.exception but return a sanitized message + trace_id.
+
+Both stdout (error messages returned to LLM) and stderr (traceback logs)
+are sanitized via sanitize_text() to strip file paths, API keys, and
+other internal information.
 """
 import logging
 import traceback
 import uuid
 from dataclasses import dataclass
 from typing import Optional
+
+from config.audit import sanitize_text
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +65,8 @@ def format_error(e: Exception, *, context: str = "") -> FormattedError:
     """Build a sanitized error envelope from an exception.
 
     If e is MCPError, use its declared type/message.
-    Otherwise, log full traceback (server-side) and return a generic envelope.
+    Otherwise, log full traceback (server-side, sanitized) and return a
+    generic envelope with the exception message sanitized.
     """
     trace_id = uuid.uuid4().hex[:12]
     if isinstance(e, MCPError):
@@ -69,13 +76,14 @@ def format_error(e: Exception, *, context: str = "") -> FormattedError:
             trace_id=trace_id,
             details=e.details,
         )
-    # Unexpected exception: log full traceback, return generic envelope.
+    # Unexpected exception: log full traceback (sanitized for stderr safety),
+    # return generic envelope with sanitized message for stdout safety.
     logger.error(
         "unexpected exception in MCP tool [trace_id=%s context=%s]\n%s",
-        trace_id, context, traceback.format_exc(),
+        trace_id, context, sanitize_text(traceback.format_exc(), max_len=2000),
     )
     return FormattedError(
         error_type=_classify_exception(e),
-        message=str(e) if len(str(e)) < 200 else f"{type(e).__name__} (truncated)",
+        message=sanitize_text(str(e)),
         trace_id=trace_id,
     )

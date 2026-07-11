@@ -4,12 +4,15 @@ Provides:
 - TraceContext: async-safe trace_id context (contextvars)
 - AuditLogger: structured JSON audit events (input, intent, tool_call, output)
 - audit_event: convenience function to emit structured audit logs
+- mask_sensitive: recursively mask sensitive dict fields
+- sanitize_text: mask sensitive patterns (paths, keys, credentials) in text
 
 trace_id is generated at BFF entry and propagated through
 Orchestrator -> Worker -> Tool Server via contextvars.
 """
 import json
 import logging
+import re
 import time
 import uuid
 from contextvars import ContextVar
@@ -137,3 +140,60 @@ def mask_sensitive(value: Any, fields: Optional[set[str]] = None) -> Any:
     if isinstance(value, list):
         return [mask_sensitive(v, sensitive) for v in value]
     return value
+
+
+# ---------------------------------------------------------------------------
+# sanitize_text: mask sensitive patterns in free-form text (error messages,
+# log lines, tracebacks). Used for both stdout (returned to LLM) and stderr
+# (logs inherited by parent process / Host).
+# ---------------------------------------------------------------------------
+
+# URL with embedded credentials: redis://user:password@host, postgres://...
+_RE_URL_CREDS = re.compile(r'(\w+://[^\s:/@]+):([^\s/@]+)@', re.IGNORECASE)
+
+# Windows absolute paths: C:\Users\..., D:\mine\...
+_RE_WIN_PATH = re.compile(r'[A-Za-z]:\\[^\s\'"<>]+(?:\\[^\s\'"<>]+)+')
+
+# Unix absolute paths under common root directories
+_RE_UNIX_PATH = re.compile(
+    r'/(?:home|usr|opt|etc|var|tmp|root|Users|mnt|data|app|srv)/[^\s\'"<>]+'
+)
+
+# API key patterns: sk-xxx, sk-proj-xxx, AKIAxxx, etc.
+# Allows dashes in key body (e.g., sk-proj-abc123def456...).
+_RE_API_KEY = re.compile(r'(?:sk|ak|AKIA)[-_]?[a-zA-Z0-9][a-zA-Z0-9\-]{14,}')
+
+# Bearer tokens in headers
+_RE_BEARER = re.compile(r'Bearer\s+[a-zA-Z0-9._\-]+', re.IGNORECASE)
+
+# key=value or key: value patterns for known sensitive field names
+_RE_KV_SECRET = re.compile(
+    r'((?:api[_-]?key|token|password|passwd|secret|authorization|access[_-]?key)\s*[=:])\s*[^\s\'";,}>)]+',
+    re.IGNORECASE,
+)
+
+
+def sanitize_text(text: str, *, max_len: int = 200) -> str:
+    """Mask sensitive patterns in free-form text.
+
+    Handles:
+    - File paths (Windows / Unix) → <path>
+    - API keys (sk-xxx, AKIAxxx) → <masked_key>
+    - Bearer tokens → Bearer ***
+    - URL credentials (redis://user:pass@host) → user:***@host
+    - key=value secret patterns → key=***
+
+    Truncates to *max_len* characters to prevent large payload leakage.
+    """
+    if not text:
+        return text or ""
+    result = str(text)
+    result = _RE_URL_CREDS.sub(r'\1:***@', result)
+    result = _RE_WIN_PATH.sub('<path>', result)
+    result = _RE_UNIX_PATH.sub('<path>', result)
+    result = _RE_API_KEY.sub('<masked_key>', result)
+    result = _RE_BEARER.sub('Bearer ***', result)
+    result = _RE_KV_SECRET.sub(r'\1***', result)
+    if len(result) > max_len:
+        result = result[:max_len] + "...(truncated)"
+    return result

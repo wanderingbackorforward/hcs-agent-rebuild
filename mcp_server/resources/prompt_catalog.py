@@ -8,6 +8,7 @@ so newly added templates appear automatically.
 import logging
 
 from prompts.loader import list_prompt_names, load_prompt
+from config.audit import sanitize_text
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,9 @@ def prompt_catalog_handler() -> str:
             lines.append("")
         return "\n".join(lines)
     except Exception as e:
-        logger.warning(f"prompt_catalog resource failed: {e}")
-        return f"# Prompt Catalog\n\n(Unable to load catalog: {e})"
+        safe_msg = sanitize_text(str(e))
+        logger.warning(f"prompt_catalog resource failed: {safe_msg}")
+        return f"# Prompt Catalog\n\n(Unable to load catalog: {safe_msg})"
 
 
 def register_resource(protocol_handler) -> None:

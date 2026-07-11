@@ -9,6 +9,7 @@ without triggering a full tool invocation.
 import logging
 
 from services.knowledge_service import KnowledgeService
+from config.audit import sanitize_text
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,9 @@ def knowledge_catalog_handler() -> str:
             lines.append(f"- **{doc_id}**: {preview}...")
         return "\n".join(lines)
     except Exception as e:
-        logger.warning(f"knowledge_catalog resource failed: {e}")
-        return f"# HCS Knowledge Catalog\n\n(Unable to load catalog: {e})"
+        safe_msg = sanitize_text(str(e))
+        logger.warning(f"knowledge_catalog resource failed: {safe_msg}")
+        return f"# HCS Knowledge Catalog\n\n(Unable to load catalog: {safe_msg})"
 
 
 def register_resource(protocol_handler) -> None:

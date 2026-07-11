@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from mcp import types
 from mcp.server.lowlevel import Server
 
-from config.audit import audit_event, get_agent_name
+from config.audit import audit_event, get_agent_name, sanitize_text
 from mcp_server.errors import format_error
 
 logger = logging.getLogger(__name__)
@@ -168,15 +168,16 @@ class ProtocolHandler:
                 isError=False,
             )
         except TypeError as e:
+            safe_msg = sanitize_text(str(e))
             audit_event(
                 layer="tool_server",
                 event_type="error",
-                message=f"invalid params for {name}: {e}",
+                message=f"invalid params for {name}: {safe_msg}",
                 data={"tool": name},
                 level=40,
             )
             return types.CallToolResult(
-                content=[types.TextContent(type="text", text=f"Error: Invalid parameters - {e}")],
+                content=[types.TextContent(type="text", text=f"Error: Invalid parameters - {safe_msg}")],
                 isError=True,
             )
         except Exception as e:
@@ -267,7 +268,12 @@ class ProtocolHandler:
                 data={"uri": uri, "error": err.error_type},
                 level=40,
             )
-            raise
+            # Raise sanitized error — never leak the original exception
+            # (which may contain file paths, config values, etc.) to the
+            # MCP SDK's error response on stdout.
+            raise ValueError(
+                f"Failed to read resource '{uri}': {err.error_type} (trace_id={err.trace_id})"
+            ) from None
 
     # ------------------------------------------------------------------
     # Prompt registration & rendering
@@ -337,11 +343,14 @@ class ProtocolHandler:
             audit_event(
                 layer="tool_server",
                 event_type="error",
-                message=f"invalid prompt arguments for {name}: {e}",
+                message=f"invalid prompt arguments for {name}: {sanitize_text(str(e))}",
                 data={"prompt": name},
                 level=40,
             )
-            raise
+            # Raise sanitized error — never leak the original exception.
+            raise ValueError(
+                f"Failed to render prompt '{name}': {err.error_type} (trace_id={err.trace_id})"
+            ) from None
         except Exception as e:
             err = format_error(e, context=f"get_prompt:{name}")
             audit_event(
@@ -351,7 +360,10 @@ class ProtocolHandler:
                 data={"prompt": name, "error": err.error_type},
                 level=40,
             )
-            raise
+            # Raise sanitized error — never leak the original exception.
+            raise ValueError(
+                f"Failed to render prompt '{name}': {err.error_type} (trace_id={err.trace_id})"
+            ) from None
 
 
 def _register_default_tools(protocol_handler: ProtocolHandler) -> None:
