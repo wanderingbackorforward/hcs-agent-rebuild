@@ -9,6 +9,7 @@ base with real vectors. When no key is set (CI's default state), they
 skip — the hybrid_search test (test_hybrid_search.py) is the dedicated
 embedding-API integration test.
 """
+import json
 import os
 import tempfile
 import pytest
@@ -50,12 +51,17 @@ def test_query_knowledge_hub_happy_path(embedding_works, knowledge_service):
     import asyncio
     res = asyncio.run(
         query_knowledge_hub.query_knowledge_hub_handler(
-            query="HCS SDK 怎么安装", top_k=3,
+            query="HCS SDK 怎么安装", top_k=3, return_mode="both",
         )
     )
     assert res.isError is False
-    text = res.content[0].text
-    assert "References" in text or "AI Answer" in text
+    payload = json.loads(res.content[0].text)
+    assert payload["query"] == "HCS SDK 怎么安装"
+    assert payload["top_k_used"] == 3
+    assert payload["return_mode"] == "both"
+    assert payload["result_count"] >= 1
+    assert isinstance(payload["retrieved_chunks"], list)
+    assert payload["answer_generated_by"] in {"llm", "fallback", "none"}
 
 
 @requires_embedding
@@ -70,6 +76,23 @@ def test_query_knowledge_hub_no_results(embedding_works, knowledge_service):
     )
     # Should be a clean not-found or empty-result, not a raw exception.
     assert res.isError is False
+    payload = json.loads(res.content[0].text)
+    assert payload["result_count"] == 0
+    assert payload["message"] == "未找到相关资料。"
+
+
+def test_query_knowledge_hub_invalid_return_mode():
+    from mcp_server.tools import query_knowledge_hub
+    import asyncio
+    res = asyncio.run(
+        query_knowledge_hub.query_knowledge_hub_handler(
+            query="HCS 是什么",
+            return_mode="invalid-mode",
+        )
+    )
+    assert res.isError is True
+    text = res.content[0].text
+    assert "error_type=invalid_input" in text
 
 
 @requires_embedding

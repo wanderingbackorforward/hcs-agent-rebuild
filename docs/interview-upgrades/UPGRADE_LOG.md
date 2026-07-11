@@ -325,3 +325,54 @@
 - retry 端点 max 3 次限制 — 防止无效重试打垮服务器
 - decision 字段白名单 + mask_sensitive — 防止敏感信息泄漏
 - 前端用 fetch+ReadableStream 不用 EventSource — POST 端点 + API Key 认证
+
+### 2026-07-10 MCP 闭环接线计划（Step 1）
+
+**背景**：当前项目中 `KnowledgeQAAgent` 的自然语言路由是通的，但生产链路仍然直连 `KnowledgeService.search()`，没有真正通过 MCP Tool 做工具规划与调用。面试时会被追问“你的子 Agent 真会用 MCP 吗”。
+
+**本步只改一个核心问题**：
+1. 让 `KnowledgeQAAgent` 真实接入 3 个 MCP Tool，而不是只走本地检索服务。
+2. 让 `ReActLoop` 支持异步工具调用，能执行真实 MCP handler。
+3. 增加闭环测试，证明“自然语言 -> ReAct -> MCP Tool -> 最终答案”是成立的。
+
+**本步不做的事**：
+- 暂不扩展 3 个 Tool 的参数和返回字段。
+- 暂不改 transport 层。
+- 暂不引入新的 Tool。
+
+**验证目标**：
+- 代码层能看到 `KnowledgeQAAgent` 通过 MCP 协议层调工具。
+- 测试层能证明至少一条自然语言问答链路真实调用了 `query_knowledge_hub`。
+- 改动可独立提交，作为一个原子 git checkpoint。
+
+### 2026-07-10 方案调整：先做工具结构设计与链路澄清
+
+**原因**：用户确认当前阶段先不碰 `ReActLoop`，避免把“顶层分流”与“查询子 Agent 内部执行策略”混在一起，先把架构讲清楚、工具设计做扎实，再决定是否接 ReAct。
+
+**本轮只做两件事**：
+1. 重新设计 `query_knowledge_hub`、`list_collections`、`get_document_summary` 的参数与返回结构，补齐字段与可消费性。
+2. 把当前查询子 Agent 的真实链路写清楚，明确“哪里已经打通，哪里还没有打通”。
+
+**本轮明确不做**：
+- 不改 `TaskClassificationAgent` 顶层分流逻辑。
+- 不接 `ReActLoop` 到生产链路。
+- 不新增 MCP Tool。
+
+**预期产物**：
+- 一份面向开发和面试表述都可直接使用的 Markdown 说明文档。
+- 一个干净的 git checkpoint，便于下一步单独讨论是否接入 ReAct。
+
+### 2026-07-10 代码改造 Step 1：升级 `query_knowledge_hub`
+
+**目标**：先只升级一个 MCP Tool，验证“小步快跑 + 原子提交”的节奏可行。
+
+**本步范围**：
+1. 扩充 `query_knowledge_hub` 的输入参数，补齐过滤条件和返回控制项。
+2. 把输出从面向人类阅读的 Markdown，升级为更适合 Agent 消费的结构化 JSON 文本。
+3. 同步更新测试与 `eval/golden_cases.py` 中的 schema 镜像。
+
+**本步不做**：
+- 不改 `list_collections`
+- 不改 `get_document_summary`
+- 不碰 `KnowledgeQAAgent` 主链
+- 不碰 `ReActLoop`
