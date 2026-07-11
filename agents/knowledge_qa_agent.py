@@ -8,8 +8,9 @@ U1+U2 upgrade: Integrated layered memory (short-term + long-term) and
 context manager for token budget control.
 """
 import logging
+import re
 import uuid
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
@@ -19,7 +20,7 @@ from config.settings import app_settings
 from db.db_router import DatabaseRouter
 from db.repositories.session_repository import SessionRepository
 from services.knowledge_service import KnowledgeService
-from agents.knowledge_qa import KnowledgeRetriever, ResponseGenerator
+from agents.knowledge_qa import KnowledgeRetriever, ResponseGenerator, KnowledgeToolBroker
 from agents.memory import ShortTermMemory, LongTermMemory, TaskMemory
 from agents.memory.long_term_memory import MEMORY_COLLECTION
 from agents.context_manager import ContextManager, count_tokens
@@ -28,6 +29,7 @@ from cache.registry import get_semantic_cache
 from rag.ingestion.storage.chroma_store import ChromaStore
 
 logger = logging.getLogger(__name__)
+_DOC_ID_RE = re.compile(r"\b[hH][cC][sS][-_][a-zA-Z0-9][a-zA-Z0-9\-_]*\b")
 
 
 class _SQLiteBackedHistory(BaseChatMessageHistory):
@@ -89,6 +91,7 @@ class KnowledgeQAAgent:
         self.knowledge_service = knowledge_service or KnowledgeService(db_router=db_router)
         self.retriever = KnowledgeRetriever(self.knowledge_service)
         self.response_generator = ResponseGenerator(self.llm)
+        self.tool_broker = KnowledgeToolBroker()
         # db_router.session is already a SessionRepository; use it directly.
         self._session_repo = (db_router or DatabaseRouter()).session
         self.chat_history = _SQLiteBackedHistory(self._session_repo, self.session_id)
@@ -142,6 +145,185 @@ class KnowledgeQAAgent:
     def set_unrelated_callback(self, callback):
         self._unrelated_callback = callback
 
+    def _extract_doc_id(self, query: str) -> Optional[str]:
+        m = _DOC_ID_RE.search(query or "")
+        return m.group(0) if m else None
+
+    def _is_discovery_query(self, query: str) -> bool:
+        query = (query or "").lower()
+        hints = [
+            "有哪些", "有什么", "哪些文档", "文档列表", "分类", "类别",
+            "知识库", "目录", "集合", "清单", "列出",
+        ]
+        return any(h in query for h in hints)
+
+    def _is_summary_query(self, query: str) -> bool:
+        query = (query or "").lower()
+        hints = ["摘要", "总结", "讲什么", "这篇", "该文档", "快速看看", "文档内容", "概述"]
+        return bool(self._extract_doc_id(query)) or any(h in query for h in hints)
+
+    def _is_list_only_query(self, query: str) -> bool:
+        query = (query or "").lower()
+        info_hints = ["怎么", "如何", "是什么", "原理", "要求", "说明", "介绍", "初始化"]
+        return self._is_discovery_query(query) and not any(h in query for h in info_hints)
+
+    def _keyword_hint(self, query: str) -> Optional[str]:
+        query = (query or "").lower()
+        for hint in ("sdk", "spec", "manual", "文档", "规范", "手册"):
+            if hint in query:
+                return hint
+        return None
+
+    def _format_list_answer(self, payload: Dict) -> str:
+        collections = payload.get("collections", [])
+        if not collections:
+            return "当前知识库中没有可用集合。"
+        collection = collections[0]
+        lines = [f"当前知识库集合：{collection.get('name', 'hcs_knowledge')}"]
+        if "doc_count" in collection:
+            lines.append(f"文档总数：{collection['doc_count']}")
+        categories = collection.get("categories") or []
+        if categories:
+            lines.append("分类：")
+            lines.extend(
+                f"- {item.get('name', 'unknown')}（{item.get('doc_count', 0)}）"
+                for item in categories
+            )
+        sample_docs = collection.get("sample_docs") or []
+        if sample_docs:
+            lines.append("样本文档：")
+            lines.extend(
+                f"- {item.get('title') or item.get('doc_id')}"
+                for item in sample_docs[:5]
+            )
+        return "\n".join(lines)
+
+    def _format_query_answer(self, payload: Dict) -> str:
+        answer = (payload.get("answer") or "").strip()
+        if answer:
+            return answer
+        chunks = payload.get("retrieved_chunks") or []
+        if not chunks:
+            return payload.get("message") or "未找到相关资料。"
+        lines = ["根据知识库检索结果："]
+        for item in chunks[:3]:
+            title = item.get("title") or item.get("doc_id") or "未知文档"
+            preview = item.get("text_preview") or ""
+            lines.append(f"- {title}: {preview}")
+        return "\n".join(lines)
+
+    def _format_summary_answer(self, summary_payload: Dict, query_payload: Optional[Dict] = None) -> str:
+        lines = []
+        if query_payload:
+            answer = (query_payload.get("answer") or "").strip()
+            if answer:
+                lines.append(answer)
+                lines.append("")
+        title = summary_payload.get("title") or summary_payload.get("doc_id") or "目标文档"
+        lines.append(f"补充文档摘要：{title}")
+        lines.append(summary_payload.get("summary") or "暂无摘要。")
+        return "\n".join(lines).strip()
+
+    async def _answer_via_tools(self, user_query: str) -> tuple[str, Dict]:
+        plan = []
+        tool_results: Dict[str, Dict] = {}
+
+        if self._is_discovery_query(user_query):
+            plan.append("list_collections")
+            tool_results["list_collections"] = await self.tool_broker.list_collections(
+                include_stats=True,
+                include_categories=True,
+                include_doc_samples=True,
+                keyword=self._keyword_hint(user_query),
+            )
+            if self._is_list_only_query(user_query):
+                return self._format_list_answer(tool_results["list_collections"]), {
+                    "path": "mcp_tools",
+                    "plan": plan,
+                    "tool_results": tool_results,
+                }
+
+        plan.append("query_knowledge_hub")
+        tool_results["query_knowledge_hub"] = await self.tool_broker.query_knowledge_hub(
+            query=user_query,
+            top_k=app_settings.retrieval_top_k,
+            return_mode="both",
+            include_scores=True,
+            include_metadata=True,
+        )
+
+        query_payload = tool_results["query_knowledge_hub"]
+        doc_id = self._extract_doc_id(user_query)
+        if not doc_id:
+            chunks = query_payload.get("retrieved_chunks") or []
+            if chunks:
+                doc_id = chunks[0].get("doc_id")
+
+        needs_summary = self._is_summary_query(user_query) or (
+            not (query_payload.get("answer") or "").strip() and bool(doc_id)
+        )
+        if needs_summary and doc_id:
+            plan.append("get_document_summary")
+            tool_results["get_document_summary"] = await self.tool_broker.get_document_summary(
+                doc_id=doc_id,
+                max_chars=800,
+                include_metadata=True,
+                include_source=True,
+                include_chunk_stats=True,
+            )
+            return self._format_summary_answer(
+                tool_results["get_document_summary"], query_payload
+            ), {
+                "path": "mcp_tools",
+                "plan": plan,
+                "tool_results": tool_results,
+            }
+
+        return self._format_query_answer(query_payload), {
+            "path": "mcp_tools",
+            "plan": plan,
+            "tool_results": tool_results,
+        }
+
+    async def _answer_via_legacy_path(self, user_query: str) -> tuple[str, Dict]:
+        results = self.retriever.retrieve(user_query, top_k=app_settings.retrieval_top_k)
+        self.task_memory.add_result("retrieval", {
+            "doc_count": len(results),
+            "top_docs": [
+                {"doc_id": did, "title": meta.get("title", did), "score": score}
+                for did, _, score, meta in results[:3]
+            ],
+        })
+
+        context = self.context_manager.build_prompt(self.SYSTEM_PROMPT, user_query)
+        rag_context = ""
+        for i, (doc_id, text, score, meta) in enumerate(results[:app_settings.retrieval_top_k], 1):
+            title = meta.get("title", doc_id)
+            rag_context += f"[{i}] 来源：{title}\n{text}\n\n"
+
+        prompt = f"""{context}
+
+## 知识库检索结果
+{rag_context}
+
+## 答案（简洁、准确，使用中文）："""
+
+        answer = ""
+        try:
+            async for chunk in self.llm.astream([HumanMessage(content=prompt)]):
+                answer += chunk.content
+            answer = answer.strip()
+        except Exception as e:
+            logger.warning(f"LLM answer generation failed: {e}")
+            answer = "根据知识库检索结果：\n" + "\n".join(
+                f"- {meta.get('title', doc_id)}: {text[:200]}..."
+                for doc_id, text, score, meta in results[:3]
+            )
+        return answer, {
+            "path": "legacy_fallback",
+            "doc_count": len(results),
+        }
+
     async def process_stream(self, user_query: str, session_id: str = None):
         await self.ensure_initialized()
         sid = session_id or self.session_id
@@ -165,57 +347,18 @@ class KnowledgeQAAgent:
             yield cached
             return
 
-        # U2: Build context with token budget management.
-        yield SSEEvent.status("retrieving", "正在检索知识库...")
-        results = self.retriever.retrieve(user_query, top_k=app_settings.retrieval_top_k)
-
-        # U3: Store retrieval results as intermediate results.
         self.task_memory.update_progress("query", user_query)
-        self.task_memory.add_result("retrieval", {
-            "doc_count": len(results),
-            "top_docs": [
-                {"doc_id": did, "title": meta.get("title", did), "score": score}
-                for did, _, score, meta in results[:3]
-            ],
-        })
-
-        # U1: Store user query in short-term memory.
         self.short_term_memory.add_message("user", user_query)
-
-        # U2: Assemble context (includes long-term memory retrieval + STM summary).
-        context = self.context_manager.build_prompt(
-            self.SYSTEM_PROMPT, user_query
-        )
-
-        # Build RAG context from retrieved docs.
-        rag_context = ""
-        for i, (doc_id, text, score, meta) in enumerate(results[:app_settings.retrieval_top_k], 1):
-            title = meta.get("title", doc_id)
-            rag_context += f"[{i}] 来源：{title}\n{text}\n\n"
-
-        # Generate answer with full context.
-        prompt = f"""{context}
-
-## 知识库检索结果
-{rag_context}
-
-## 答案（简洁、准确，使用中文）："""
-
-        answer = ""
-        yield SSEEvent.status("generating", "正在生成回答...")
         try:
-            from langchain_core.messages import HumanMessage
-            async for chunk in self.llm.astream([HumanMessage(content=prompt)]):
-                answer += chunk.content
-            answer = answer.strip()
-            # Cache the successful answer for similar future queries.
-            get_semantic_cache().set(user_query, answer)
+            yield SSEEvent.status("planning", "正在规划知识工具...")
+            answer, path_meta = await self._answer_via_tools(user_query)
         except Exception as e:
-            logger.warning(f"LLM answer generation failed: {e}")
-            answer = "根据知识库检索结果：\n" + "\n".join(
-                f"- {meta.get('title', doc_id)}: {text[:200]}..."
-                for doc_id, text, score, meta in results[:3]
-            )
+            logger.warning("Tool-driven knowledge path failed, fallback to legacy: %s", e)
+            yield SSEEvent.status("fallback", "知识工具失败，回退旧链路...")
+            answer, path_meta = await self._answer_via_legacy_path(user_query)
+
+        get_semantic_cache().set(user_query, answer)
+        self.task_memory.add_result("tool_path", path_meta)
 
         # U1: Store AI response in short-term memory.
         self.short_term_memory.add_message("ai", answer)

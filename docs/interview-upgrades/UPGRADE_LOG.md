@@ -437,3 +437,18 @@
 
 **产物**：
 - 新增《`KnowledgeQAAgent过渡期架构方案.md`》，作为后续实现与提交的边界文档。
+
+### 2026-07-11 代码改造 Step 5：查询子 Agent 切到 MCP 主路径
+
+**目标**：按照过渡期架构方案，把 `KnowledgeQAAgent` 的主路径切到 MCP Tool，同时保留旧直连链路 fallback。
+
+**本步改动**：
+1. 新增 `KnowledgeToolBroker`，统一通过 `ProtocolHandler.execute_tool()` 调用 3 个 MCP Tool。
+2. `KnowledgeQAAgent` 新增确定性的最小多步策略：`list -> query -> summary`。
+3. 原有 `KnowledgeRetriever -> KnowledgeService` 保留为 fallback，但不再承载新功能扩展。
+4. 补充最小闭环测试，证明自然语言进入查询子 Agent 后会真实发生工具调用。
+
+**结果**：
+- 查询子 Agent 的主工作路径已经不再直冲 `KnowledgeService`，而是优先走 MCP Tool。
+- 旧链路退化为兜底路径。
+- 暂未引入 `ReActLoop`，但最小工具化多步能力已具备。
