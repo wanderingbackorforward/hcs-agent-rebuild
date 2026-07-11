@@ -8,6 +8,17 @@ Supports all three MCP primitive types:
 Supports RBAC: each tool declares which agent roles are allowed to call it.
 At execution time, the caller must pass agent_name; if the agent is not in
 the tool's allowed_agents list, the call is denied with a permission error.
+
+Dual-layer error mechanism:
+  - Protocol-level errors (tool not found, permission denied) raise
+    McpError(ErrorData) → JSON-RPC error response with proper error code.
+  - Business-level errors (invalid input, not found, timeout) return
+    CallToolResult(isError=True) with actionable hint for the LLM.
+
+Tool Annotations:
+  Each tool declares readOnlyHint, destructiveHint, idempotentHint,
+  openWorldHint so the Client can decide whether to prompt for
+  user confirmation before calling.
 """
 import logging
 from dataclasses import dataclass, field
@@ -15,9 +26,10 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from mcp import types
 from mcp.server.lowlevel import Server
+from mcp.shared.exceptions import McpError
 
 from config.audit import audit_event, get_agent_name, sanitize_text
-from mcp_server.errors import format_error
+from mcp_server.errors import format_error, _default_hint
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +44,9 @@ class ToolDefinition:
     # Empty set = public (any caller allowed). This is the default
     # for backward compat: existing tools remain callable by all.
     allowed_agents: Set[str] = field(default_factory=set)
+    # Tool Annotations: hints for the Client about side effects.
+    # Client uses these to decide whether to prompt for user confirmation.
+    annotations: Optional[types.ToolAnnotations] = None
 
 
 @dataclass
@@ -81,6 +96,7 @@ class ProtocolHandler:
         input_schema: Dict[str, Any],
         handler: Callable[..., Any],
         allowed_agents: Optional[Set[str]] = None,
+        annotations: Optional[types.ToolAnnotations] = None,
     ) -> None:
         if name in self.tools:
             raise ValueError(f"Tool '{name}' is already registered")
@@ -90,6 +106,7 @@ class ProtocolHandler:
             input_schema=input_schema,
             handler=handler,
             allowed_agents=allowed_agents or set(),
+            annotations=annotations,
         )
 
     def get_tool_schemas(self) -> List[types.Tool]:
@@ -98,6 +115,7 @@ class ProtocolHandler:
                 name=tool.name,
                 description=tool.description,
                 inputSchema=tool.input_schema,
+                annotations=tool.annotations,
             )
             for tool in self.tools.values()
         ]
@@ -105,6 +123,7 @@ class ProtocolHandler:
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> types.CallToolResult:
         agent_name = get_agent_name()
 
+        # --- Protocol-level errors: raise McpError for JSON-RPC error codes ---
         if name not in self.tools:
             audit_event(
                 layer="tool_server",
@@ -113,10 +132,11 @@ class ProtocolHandler:
                 data={"tool": name, "agent": agent_name},
                 level=40,
             )
-            return types.CallToolResult(
-                content=[types.TextContent(type="text", text=f"Error: Tool '{name}' not found")],
-                isError=True,
-            )
+            raise McpError(types.ErrorData(
+                code=types.METHOD_NOT_FOUND,
+                message=f"Tool '{name}' not found",
+            ))
+
         tool = self.tools[name]
 
         # RBAC check: if the tool has an allowed_agents list, the caller
@@ -129,13 +149,10 @@ class ProtocolHandler:
                 data={"tool": name, "agent": agent_name, "allowed": list(tool.allowed_agents)},
                 level=40,
             )
-            return types.CallToolResult(
-                content=[types.TextContent(
-                    type="text",
-                    text=f"Error: permission_denied; agent '{agent_name}' is not authorized to call '{name}'",
-                )],
-                isError=True,
-            )
+            raise McpError(types.ErrorData(
+                code=types.INVALID_PARAMS,
+                message=f"Permission denied: agent '{agent_name}' is not authorized to call '{name}'",
+            ))
 
         # Audit: tool call accepted (mask sensitive args)
         from config.audit import mask_sensitive
@@ -146,6 +163,7 @@ class ProtocolHandler:
             data={"tool": name, "agent": agent_name, "arguments": mask_sensitive(arguments)},
         )
 
+        # --- Business-level errors: return CallToolResult(isError=True) with hint ---
         try:
             result = await tool.handler(**arguments)
             audit_event(
@@ -169,6 +187,7 @@ class ProtocolHandler:
             )
         except TypeError as e:
             safe_msg = sanitize_text(str(e))
+            hint = _default_hint("invalid_input")
             audit_event(
                 layer="tool_server",
                 event_type="error",
@@ -177,19 +196,23 @@ class ProtocolHandler:
                 level=40,
             )
             return types.CallToolResult(
-                content=[types.TextContent(type="text", text=f"Error: Invalid parameters - {safe_msg}")],
+                content=[types.TextContent(
+                    type="text",
+                    text=f"error_type=invalid_input; message=Invalid parameters - {safe_msg}; hint={hint}; trace_id=(see server logs)",
+                )],
                 isError=True,
             )
         except Exception as e:
+            err = format_error(e, context=f"execute_tool:{name}")
             audit_event(
                 layer="tool_server",
                 event_type="error",
-                message=f"internal error in {name}: {type(e).__name__}",
-                data={"tool": name},
+                message=f"internal error in {name}: {err.error_type}",
+                data={"tool": name, "error_type": err.error_type},
                 level=40,
             )
             return types.CallToolResult(
-                content=[types.TextContent(type="text", text=f"Error: Internal server error while executing '{name}'")],
+                content=[types.TextContent(type="text", text=err.to_text())],
                 isError=True,
             )
 

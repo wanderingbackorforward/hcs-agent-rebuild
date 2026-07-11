@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 TOOL_NAME = "get_document_summary"
 TOOL_DESCRIPTION = "Get summary and metadata for a specific HCS knowledge document."
+TOOL_ANNOTATIONS = types.ToolAnnotations(
+    title="Get Document Summary",
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
 TOOL_INPUT_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -123,4 +130,5 @@ def register_tool(protocol_handler) -> None:
         description=TOOL_DESCRIPTION,
         input_schema=TOOL_INPUT_SCHEMA,
         handler=get_document_summary_handler,
+        annotations=TOOL_ANNOTATIONS,
     )

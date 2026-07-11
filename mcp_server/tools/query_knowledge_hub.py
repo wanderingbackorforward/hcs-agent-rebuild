@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 TOOL_NAME = "query_knowledge_hub"
 TOOL_DESCRIPTION = "Search the HCS knowledge base for relevant documents using hybrid search (dense + BM25 + RRF)."
+TOOL_ANNOTATIONS = types.ToolAnnotations(
+    title="Query Knowledge Hub",
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
 TOOL_INPUT_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -241,4 +248,5 @@ def register_tool(protocol_handler) -> None:
         description=TOOL_DESCRIPTION,
         input_schema=TOOL_INPUT_SCHEMA,
         handler=query_knowledge_hub_handler,
+        annotations=TOOL_ANNOTATIONS,
     )
