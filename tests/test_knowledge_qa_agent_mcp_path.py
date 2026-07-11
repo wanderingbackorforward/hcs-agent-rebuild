@@ -90,6 +90,15 @@ class FakeBroker:
     def __init__(self):
         self.calls = []
 
+    async def ensure_initialized(self):
+        """Return permissive flags (tools enabled) for backward-compat tests."""
+        from mcp_client.capabilities import ClientFeatureFlags
+        return ClientFeatureFlags(tools_enabled=True)
+
+    def get_feature_flags(self):
+        from mcp_client.capabilities import ClientFeatureFlags
+        return ClientFeatureFlags(tools_enabled=True)
+
     async def list_collections(self, **kwargs):
         self.calls.append(("list_collections", kwargs))
         return {

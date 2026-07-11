@@ -20,6 +20,7 @@
 | T02 | RAG摄取流水线 | `rag/ingestion/pipeline.py` Load->Split->Embed->Upsert | -- | "完整的文档摄取流水线，支持中英文分块" |
 | T02 | Hybrid Search | `rag/query_engine/hybrid_search.py` Dense+BM25+RRF+Rerank | -- | "Hybrid Search用Dense Embedding+BM25稀疏检索+RRF融合+可选Rerank" |
 | T03 | MCP Server | `mcp_server/` 完整Server(stdio)+3个Tool+错误处理 | 深挖5层/2份 | "我实现了MCP Server，暴露3个标准化工具，用stdio transport，有完整的错误处理" |
+| T03 | MCP Client 能力协商 | `mcp_client/` MCPClientBase+Local/Remote+ServerCapabilityProfile+ClientFeatureFlags | -- | "MCP Client做真实能力协商，Server不支持的能力直接关开关，纯客户端控制无胶水代码" |
 | T04 | 状态机对话管理 | `agents/task_classification/state_manager.py` StateManager+StateEnum | -- | "用状态机管理对话流程，CLASSIFY->ENVIRONMENT/KNOWLEDGE/OTHER" |
 | T05 | 意图路由评估 | `tests/test_task_classification_agent.py` 50条golden test | -- | "50条golden test覆盖意图路由准确率" |
 | T06 | 多模型Provider工厂 | `config/model_provider.py` 支持Qwen/DeepSeek/MiniMax/Azure/OpenAI | -- | "多Provider工厂模式，环境变量切换LLM和Embedding" |
@@ -452,3 +453,39 @@
 - 查询子 Agent 的主工作路径已经不再直冲 `KnowledgeService`，而是优先走 MCP Tool。
 - 旧链路退化为兜底路径。
 - 暂未引入 `ReActLoop`，但最小工具化多步能力已具备。
+
+### 2026-07-12 架构升级 Step 6：MCP Client 抽象层 + 能力探测与纯开关降级
+
+**背景**：核心场景是「第三方 MCP Server 不受管控」——改不了对方后端。此前 `KnowledgeToolBroker` 直连进程内 `ProtocolHandler`，是"假客户端"，无法连接第三方 Server，也没有能力协商。当 Server 不支持日志推送、流式输出等可选能力时，上层会盲目发请求导致静默失败。
+
+**本次改动**：
+
+| 文件 | 职责 |
+|------|------|
+| `mcp_client/__init__.py` | 模块入口，导出 MCPClientBase / LocalMCPClient / RemoteMCPClient / ServerCapabilityProfile / ClientFeatureFlags |
+| `mcp_client/capabilities.py` | `ServerCapabilityProfile`：从 MCP SDK `ServerCapabilities` 解析布尔能力位（tools/resources/prompts/logging/completions + 子能力）；`ClientFeatureFlags`：在 profile 之上叠加环境变量覆盖（只能 force-disable，不能 force-enable） |
+| `mcp_client/base.py` | `MCPClientBase` 抽象基类：`initialize()` → 能力握手、`call_tool()` → 工具调用、`get_feature_flags()` → 开关查询、`is_tool_available()` → 工具存在性检查 |
+| `mcp_client/local_client.py` | `LocalMCPClient`：包装 `ProtocolHandler`，从已注册的 tools/resources/prompts 合成 `ServerCapabilityProfile`（本地服务器已知能力，不需要网络握手） |
+| `mcp_client/remote_client.py` | `RemoteMCPClient`：基于 MCP SDK `ClientSession`，真实 `initialize` 握手获取 `ServerCapabilities`，支持 stdio / SSE 两种传输 |
+| `agents/knowledge_qa/tool_broker.py` | 改造：从直连 `ProtocolHandler` 改为通过 `MCPClientBase`；新增 `ensure_initialized()` 返回 `ClientFeatureFlags`；`call_tool()` 在 `tools_enabled=False` 时抛 `MCPError(capability_not_supported)` |
+| `agents/knowledge_qa_agent.py` | 改造：`process_stream()` 在尝试工具路径前先调 `ensure_initialized()` 检查能力开关；`tools_enabled=False` 时直接走 legacy fallback，不尝试工具路径 |
+| `config/settings.py` | 新增 MCP Client 配置项：transport / command / args / url / timeout |
+| `tests/test_mcp_client_capabilities.py` | 23 个测试：能力解析 5 + 环境变量覆盖 5 + LocalClient 7 + Broker 能力检查 3 + 第三方 Server 场景 3 |
+| `tests/test_knowledge_qa_agent_mcp_path.py` | 适配：`FakeBroker` 增加 `ensure_initialized()` / `get_feature_flags()` |
+
+**设计原则**：
+- 可选能力不兼容 → **纯客户端开关控制**：探测到 Server 不支持，直接关掉本地对应功能开关，上层业务不再发起相关请求，没有胶水代码。
+- 环境变量 `MCP_DISABLE_TOOLS` / `MCP_DISABLE_RESOURCES` / `MCP_DISABLE_PROMPTS` / `MCP_DISABLE_LOGGING` 可 force-disable 任何能力（即使 Server 声称支持），但永远不能 force-enable（Server 不支持就不能假装支持）。
+- 工具缺失降级替代（适配层胶水代码）本次不实现，留作后续可选扩展。
+
+**验证结果**：
+- `tests/test_mcp_client_capabilities.py`：23 tests PASSED
+- `tests/test_knowledge_qa_agent_mcp_path.py`：2 tests PASSED（既有测试无回归）
+- `tests/test_mcp_tools.py` + `tests/test_mcp_resources_prompts.py`：24 tests PASSED
+- 总计 49 tests PASSED，零回归
+
+**面试话术**：
+1. "MCP Client 怎么处理第三方 Server 不兼容？" → initialize 握手时做能力协商，ServerCapabilities 解析成布尔开关；不支持的能力直接关掉本地开关，上层不发请求，纯客户端控制无胶水代码。
+2. "能举例吗？" → 第三方 Server 不支持 logging → `logging_enabled=False` → Client 不发 `logging/setLevel`；不支持 resources → `resources_enabled=False` → Client 不调 `resources/list`。
+3. "操作者能覆盖吗？" → 环境变量 `MCP_DISABLE_*` 可以 force-disable 任何能力，但不能 force-enable（安全约束）。
+4. "本地 Server 和远程 Server 怎么统一？" → `MCPClientBase` 抽象基类，`LocalMCPClient` 合成能力（进程内已知），`RemoteMCPClient` 真实握手（stdio/SSE），上层 `KnowledgeToolBroker` 只面向接口。

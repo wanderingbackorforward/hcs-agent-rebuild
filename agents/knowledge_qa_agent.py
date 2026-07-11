@@ -349,13 +349,30 @@ class KnowledgeQAAgent:
 
         self.task_memory.update_progress("query", user_query)
         self.short_term_memory.add_message("user", user_query)
+
+        # Capability check: if MCP Server doesn't support tools, skip the
+        # tool path entirely and go straight to legacy fallback.
+        # This is the "pure client-side switch" — no glue code, just a boolean.
+        tools_available = True
         try:
-            yield SSEEvent.status("planning", "正在规划知识工具...")
-            answer, path_meta = await self._answer_via_tools(user_query)
+            flags = await self.tool_broker.ensure_initialized()
+            tools_available = flags.tools_enabled
         except Exception as e:
-            logger.warning("Tool-driven knowledge path failed, fallback to legacy: %s", e)
-            yield SSEEvent.status("fallback", "知识工具失败，回退旧链路...")
+            logger.warning("MCP Client initialize failed, treating as no-tools: %s", e)
+            tools_available = False
+
+        if not tools_available:
+            logger.info("MCP Server tools not available, using legacy path directly")
+            yield SSEEvent.status("fallback", "MCP Server 不支持 tools，回退旧链路...")
             answer, path_meta = await self._answer_via_legacy_path(user_query)
+        else:
+            try:
+                yield SSEEvent.status("planning", "正在规划知识工具...")
+                answer, path_meta = await self._answer_via_tools(user_query)
+            except Exception as e:
+                logger.warning("Tool-driven knowledge path failed, fallback to legacy: %s", e)
+                yield SSEEvent.status("fallback", "知识工具失败，回退旧链路...")
+                answer, path_meta = await self._answer_via_legacy_path(user_query)
 
         get_semantic_cache().set(user_query, answer)
         self.task_memory.add_result("tool_path", path_meta)

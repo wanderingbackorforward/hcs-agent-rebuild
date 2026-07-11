@@ -148,6 +148,18 @@ class AppSettings:
     # ---- MCP server ----
     mcp_server_name: str = _env_str("MCP_SERVER_NAME", "hcs-agent-rebuild")
 
+    # ---- MCP Client ----
+    # Transport: "local" (in-process), "stdio" (subprocess), "sse" (remote).
+    mcp_client_transport: str = _env_str("MCP_CLIENT_TRANSPORT", "local")
+    # For stdio transport: command and args to spawn the MCP Server process.
+    mcp_client_command: str = _env_str("MCP_CLIENT_COMMAND", "")
+    mcp_client_args: str = _env_str("MCP_CLIENT_ARGS", "")
+    # For SSE transport: URL of the remote MCP Server.
+    mcp_client_url: str = _env_str("MCP_CLIENT_URL", "")
+    mcp_client_timeout: float = _env_float("MCP_CLIENT_TIMEOUT", 5.0)
+    # Force-disable capabilities (overrides server advertisement).
+    # These are read by ClientFeatureFlags.from_profile() via os.environ.
+
     @property
     def cors_origins_list(self) -> list:
         """Parse CORS_ORIGINS into a list; ``*`` stays as ``['*']``."""
