@@ -48,7 +48,14 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     "get_document_summary": {
         "required": ["doc_id"],
-        "properties": {"doc_id": {"type": "string"}},
+        "properties": {
+            "doc_id": {"type": "string"},
+            "collection": {"type": "string"},
+            "max_chars": {"type": "integer"},
+            "include_metadata": {"type": "boolean"},
+            "include_source": {"type": "boolean"},
+            "include_chunk_stats": {"type": "boolean"},
+        },
     },
 }
 

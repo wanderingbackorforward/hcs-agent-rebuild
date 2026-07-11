@@ -20,8 +20,21 @@ class FakeLLM:
 
 
 class FakeDoc:
-    def __init__(self, content: str):
+    def __init__(
+        self,
+        content: str,
+        doc_id: str = None,
+        title: str = None,
+        category: str = None,
+        source: str = None,
+        metadata_json: dict = None,
+    ):
         self.content = content
+        self.doc_id = doc_id
+        self.title = title
+        self.category = category
+        self.source = source
+        self.metadata_json = metadata_json or {}
 
 
 class FakeKnowledgeRepo:
@@ -37,8 +50,21 @@ class FakeKnowledgeRepo:
         return list(self._docs_by_category.get(category, []))
 
     def get_by_doc_id(self, doc_id):
-        content = self._docs_by_id.get(doc_id)
-        return FakeDoc(content) if content is not None else None
+        raw = self._docs_by_id.get(doc_id)
+        if raw is None:
+            return None
+        if isinstance(raw, FakeDoc):
+            return raw
+        if isinstance(raw, dict):
+            return FakeDoc(
+                content=raw.get("content", ""),
+                doc_id=doc_id,
+                title=raw.get("title"),
+                category=raw.get("category"),
+                source=raw.get("source"),
+                metadata_json=raw.get("metadata_json"),
+            )
+        return FakeDoc(content=raw, doc_id=doc_id, title=doc_id)
 
 
 class FakeDB:
@@ -188,15 +214,49 @@ def test_get_document_summary_happy_path(monkeypatch):
     from mcp_server.tools import get_document_summary
     import asyncio
     fake_service = FakeKnowledgeService(
-        summary_map={"hcs-sdk-quickstart": "HCS SDK 是华为混合云平台的开发工具包。"}
+        summary_map={"hcs-sdk-quickstart": "HCS SDK 是华为混合云平台的开发工具包。"},
+        docs_by_id={
+            "hcs-sdk-quickstart": {
+                "content": "HCS SDK 是华为混合云平台的开发工具包。",
+                "title": "HCS SDK 快速入门",
+                "category": "sdk",
+                "source": "seed",
+                "metadata_json": {"chunk_count": 4, "owner": "docs-team"},
+            }
+        },
     )
     monkeypatch.setattr(get_document_summary, "KnowledgeService", lambda: fake_service)
     res = asyncio.run(
-        get_document_summary.get_document_summary_handler(doc_id="hcs-sdk-quickstart")
+        get_document_summary.get_document_summary_handler(
+            doc_id="hcs-sdk-quickstart",
+            max_chars=200,
+            include_metadata=True,
+            include_source=True,
+            include_chunk_stats=True,
+        )
     )
     assert res.isError is False
-    text = res.content[0].text
-    assert "HCS SDK" in text
+    payload = json.loads(res.content[0].text)
+    assert payload["doc_id"] == "hcs-sdk-quickstart"
+    assert payload["title"] == "HCS SDK 快速入门"
+    assert payload["category"] == "sdk"
+    assert payload["source"] == "seed"
+    assert payload["chunk_count"] == 4
+    assert payload["metadata"]["owner"] == "docs-team"
+    assert "HCS SDK" in payload["summary"]
+
+
+def test_get_document_summary_invalid_max_chars():
+    from mcp_server.tools import get_document_summary
+    import asyncio
+    res = asyncio.run(
+        get_document_summary.get_document_summary_handler(
+            doc_id="hcs-sdk-quickstart",
+            max_chars=50,
+        )
+    )
+    assert res.isError is True
+    assert "error_type=invalid_input" in res.content[0].text
 
 
 def test_list_collections_returns_counts(monkeypatch):

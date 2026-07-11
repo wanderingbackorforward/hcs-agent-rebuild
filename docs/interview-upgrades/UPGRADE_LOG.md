@@ -405,3 +405,16 @@
 **结果**：
 - `list_collections` 现在既能返回集合统计，也能返回分类摘要和样本文档。
 - 后续如果查询子 Agent 需要先“发现知识空间”再决定检索，这个工具可以直接复用。
+
+### 2026-07-11 代码改造 Step 4：升级 `get_document_summary`
+
+**目标**：把 `get_document_summary` 从简单的文本截断工具，升级为文档级结构化查看工具。
+
+**本步改动**：
+1. 输入参数增加 `max_chars`、`include_metadata`、`include_source`、`include_chunk_stats`。
+2. 输出从 Markdown 文本改为结构化 JSON，统一返回 `doc_id`、`title`、`category`、`summary`、`metadata` 等字段。
+3. 测试补充文档元数据断言和非法参数校验。
+
+**结果**：
+- `get_document_summary` 现在可以作为查询子 Agent 的文档级查看接口，后续不需要再解析文本摘要。
+- 三个 MCP Tool 的结构化升级已经全部完成。
