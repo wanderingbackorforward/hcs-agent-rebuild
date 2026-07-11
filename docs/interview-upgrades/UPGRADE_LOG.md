@@ -376,3 +376,32 @@
 - 不改 `get_document_summary`
 - 不碰 `KnowledgeQAAgent` 主链
 - 不碰 `ReActLoop`
+
+### 2026-07-10 错误修复 Step 2：MCP 工具测试去数据库化
+
+**背景**：在验证 `query_knowledge_hub` 升级时，暴露出 `tests/test_mcp_tools.py` 依赖临时 SQLite 与 embedding/LLM 环境，导致工具单测被数据库建表和外部依赖绑死，无法稳定作为每步改造的回归基线。
+
+**本步改动**：
+1. 将 `tests/test_mcp_tools.py` 改为真正的单元测试。
+2. 用 fake `KnowledgeService`、fake repo、fake LLM 替代真实 SQLite / embedding / 外部模型调用。
+3. 保留对 `query_knowledge_hub`、`list_collections`、`get_document_summary` 的行为验证，但去掉环境依赖。
+
+**结果**：
+- `pytest tests/test_mcp_tools.py -q` 通过，6 个测试全部通过。
+- 后续每升级一个 MCP Tool，都可以直接用这组单测做稳定回归。
+
+**备注**：
+- 项目默认 SQLite 库仍然存在 schema 漂移问题，例如 `environments.deploy_method` 缺列，这属于下一步单独修的 runtime 兼容问题，不和本次单测基线修复混在一起。
+
+### 2026-07-11 代码改造 Step 3：升级 `list_collections`
+
+**目标**：把 `list_collections` 从面向人类阅读的展示型工具，升级为面向 Agent 的知识发现工具。
+
+**本步改动**：
+1. 输入参数增加 `include_categories`、`include_doc_samples`、`sample_size`、`keyword`。
+2. 输出从 Markdown 文本改为结构化 JSON，统一返回 `collections`、`total_collections`、`keyword_used` 等字段。
+3. 测试改为验证结构化返回，并补充关键字过滤与非法参数校验。
+
+**结果**：
+- `list_collections` 现在既能返回集合统计，也能返回分类摘要和样本文档。
+- 后续如果查询子 Agent 需要先“发现知识空间”再决定检索，这个工具可以直接复用。

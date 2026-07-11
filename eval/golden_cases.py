@@ -36,7 +36,16 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "max_chars_per_chunk": {"type": "integer"},
         },
     },
-    "list_collections": {"required": [], "properties": {}},
+    "list_collections": {
+        "required": [],
+        "properties": {
+            "include_stats": {"type": "boolean"},
+            "include_categories": {"type": "boolean"},
+            "include_doc_samples": {"type": "boolean"},
+            "sample_size": {"type": "integer"},
+            "keyword": {"type": "string"},
+        },
+    },
     "get_document_summary": {
         "required": ["doc_id"],
         "properties": {"doc_id": {"type": "string"}},

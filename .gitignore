@@ -18,6 +18,7 @@ data/
 *.sqlite
 *.sqlite3
 *.db
+*.db-journal
 *.faiss
 *.index
 *.pkl
