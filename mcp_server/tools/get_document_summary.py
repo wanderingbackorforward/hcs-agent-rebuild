@@ -18,6 +18,7 @@ TOOL_INPUT_SCHEMA: Dict[str, Any] = {
         "doc_id": {
             "type": "string",
             "description": "The document ID to retrieve summary for.",
+            "examples": ["hcs-sdk-quickstart"],
         },
         "collection": {
             "type": "string",
@@ -29,6 +30,7 @@ TOOL_INPUT_SCHEMA: Dict[str, Any] = {
             "default": 500,
             "minimum": 100,
             "maximum": 5000,
+            "examples": [500],
         },
         "include_metadata": {
             "type": "boolean",

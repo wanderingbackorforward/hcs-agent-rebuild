@@ -36,10 +36,12 @@ TOOL_INPUT_SCHEMA: Dict[str, Any] = {
             "default": 3,
             "minimum": 1,
             "maximum": 20,
+            "examples": [3],
         },
         "keyword": {
             "type": "string",
             "description": "Optional keyword filter for collection/category/doc title matching.",
+            "examples": ["sdk", "spec"],
         },
     },
     "required": [],

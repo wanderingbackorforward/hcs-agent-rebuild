@@ -24,6 +24,7 @@ TOOL_INPUT_SCHEMA: Dict[str, Any] = {
         "query": {
             "type": "string",
             "description": "The search query or question.",
+            "examples": ["HCS SDK 怎么接入？", "华为混合云存储类型"],
         },
         "top_k": {
             "type": "integer",
@@ -43,12 +44,14 @@ TOOL_INPUT_SCHEMA: Dict[str, Any] = {
         "doc_id": {
             "type": "string",
             "description": "Optional document id filter to search inside a single document.",
+            "examples": ["hcs-sdk-quickstart"],
         },
         "return_mode": {
             "type": "string",
             "description": "Return answer only, chunks only, or both.",
             "enum": ["answer", "chunks", "both"],
             "default": "both",
+            "examples": ["both"],
         },
         "include_scores": {
             "type": "boolean",
