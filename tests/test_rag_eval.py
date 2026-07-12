@@ -225,12 +225,12 @@ class TestRegressionGate:
         return RegressionGate(baseline_dir=tmp_path)
 
     def test_first_run_passes(self, temp_gate):
-        """First run with no baseline should pass."""
+        """First run with no baseline should pass if absolute thresholds are met."""
         current = {
             "git_commit": "abc123",
-            "ragas": {"faithfulness": 0.8, "answer_relevance": 0.7,
-                      "context_precision": 0.6, "context_recall": 0.5},
-            "performance": {"avg_end_to_end_ms": 1000},
+            "ragas": {"faithfulness": 0.8, "answer_relevance": 0.8,
+                      "context_precision": 0.8, "context_recall": 0.7},
+            "performance": {"p95_end_to_end_ms": 1000},
         }
         report, passed = temp_gate.evaluate_and_gate(current, save_on_pass=True)
         assert passed
@@ -350,6 +350,133 @@ class TestRegressionGate:
         temp_gate.print_report(report)
         captured = capsys.readouterr()
         assert "PASS" in captured.out
+
+    def test_absolute_threshold_fail_on_low_quality(self, temp_gate):
+        """Even without baseline, Faithfulness < 0.7 should fail."""
+        current = {
+            "git_commit": "abc",
+            "ragas": {"faithfulness": 0.5, "answer_relevance": 0.8,
+                      "context_precision": 0.8, "context_recall": 0.8},
+            "performance": {"p95_end_to_end_ms": 1000},
+        }
+        report, passed = temp_gate.evaluate_and_gate(current, save_on_pass=False)
+
+        assert not passed
+        assert any("faithfulness" in m for m in report.failed_metrics)
+
+    def test_absolute_threshold_fail_on_high_latency(self, temp_gate):
+        """P95 latency > 5000ms should fail even if quality is good."""
+        current = {
+            "git_commit": "abc",
+            "ragas": {"faithfulness": 0.9, "answer_relevance": 0.9,
+                      "context_precision": 0.9, "context_recall": 0.9},
+            "performance": {"p95_end_to_end_ms": 6000},
+        }
+        report, passed = temp_gate.evaluate_and_gate(current, save_on_pass=False)
+
+        assert not passed
+        assert any("p95_end_to_end_ms" in m for m in report.failed_metrics)
+
+    def test_absolute_threshold_pass_when_all_met(self, temp_gate):
+        """All metrics above absolute minimums should pass."""
+        current = {
+            "git_commit": "abc",
+            "ragas": {"faithfulness": 0.75, "answer_relevance": 0.75,
+                      "context_precision": 0.75, "context_recall": 0.65},
+            "performance": {"p95_end_to_end_ms": 3000},
+        }
+        report, passed = temp_gate.evaluate_and_gate(current, save_on_pass=False)
+
+        assert passed
+        assert all(a.passed for a in report.absolute_checks)
+
+    def test_gradual_degradation_caught_by_absolute(self, tmp_path):
+        """Simulate gradual degradation: each step passes relative gate,
+        but absolute threshold catches the cumulative decline."""
+        gate = RegressionGate(baseline_dir=tmp_path)
+
+        # Run 1: Faithfulness = 0.75 (passes absolute ≥ 0.7)
+        run1 = {
+            "git_commit": "v1",
+            "ragas": {"faithfulness": 0.75, "answer_relevance": 0.75,
+                      "context_precision": 0.75, "context_recall": 0.65},
+            "performance": {"p95_end_to_end_ms": 2000},
+        }
+        _, passed1 = gate.evaluate_and_gate(run1, save_on_pass=True)
+        assert passed1
+
+        # Run 2: Faithfulness drops 4% to 0.72 (passes relative < 5%, passes absolute)
+        run2 = {
+            "git_commit": "v2",
+            "ragas": {"faithfulness": 0.72, "answer_relevance": 0.75,
+                      "context_precision": 0.75, "context_recall": 0.65},
+            "performance": {"p95_end_to_end_ms": 2000},
+        }
+        _, passed2 = gate.evaluate_and_gate(run2, save_on_pass=True)
+        assert passed2  # Relative drop < 5%, absolute still ≥ 0.7
+
+        # Run 3: Faithfulness drops 4% to 0.69 (passes relative < 5%, FAILS absolute)
+        run3 = {
+            "git_commit": "v3",
+            "ragas": {"faithfulness": 0.69, "answer_relevance": 0.75,
+                      "context_precision": 0.75, "context_recall": 0.65},
+            "performance": {"p95_end_to_end_ms": 2000},
+        }
+        report3, passed3 = gate.evaluate_and_gate(run3, save_on_pass=False)
+
+        assert not passed3  # Absolute threshold catches it!
+        assert any("faithfulness" in m and "absolute" in m for m in report3.failed_metrics)
+
+    def test_trade_off_quality_up_latency_down(self, tmp_path):
+        """Quality improved but latency regressed → trade-off warning."""
+        gate = RegressionGate(baseline_dir=tmp_path)
+        baseline = {
+            "git_commit": "old",
+            "timestamp": "2026-01-01",
+            "ragas": {"faithfulness": 0.75, "answer_relevance": 0.75,
+                      "context_precision": 0.75, "context_recall": 0.65},
+            "performance": {"avg_end_to_end_ms": 1000, "p95_end_to_end_ms": 2000},
+        }
+        gate.save_baseline(baseline)
+
+        current = {
+            "git_commit": "new",
+            "ragas": {"faithfulness": 0.82, "answer_relevance": 0.75,
+                      "context_precision": 0.75, "context_recall": 0.65},
+            "performance": {"avg_end_to_end_ms": 1500, "p95_end_to_end_ms": 2500},
+        }
+        report, passed = gate.evaluate_and_gate(current, save_on_pass=False)
+
+        # Faithfulness improved (+0.07), but latency regressed (+50%)
+        assert len(report.trade_offs) > 0
+        assert "faithfulness" in report.trade_offs[0].quality_metrics
+        assert "avg_end_to_end_ms" in report.trade_offs[0].latency_metrics
+        # Latency increase > 20% → gate fails
+        assert not passed
+
+    def test_trade_off_latency_up_quality_down(self, tmp_path):
+        """Latency improved but quality regressed → trade-off warning."""
+        gate = RegressionGate(baseline_dir=tmp_path)
+        baseline = {
+            "git_commit": "old",
+            "timestamp": "2026-01-01",
+            "ragas": {"faithfulness": 0.80, "answer_relevance": 0.80,
+                      "context_precision": 0.80, "context_recall": 0.70},
+            "performance": {"avg_end_to_end_ms": 2000, "p95_end_to_end_ms": 3000},
+        }
+        gate.save_baseline(baseline)
+
+        current = {
+            "git_commit": "new",
+            "ragas": {"faithfulness": 0.72, "answer_relevance": 0.80,
+                      "context_precision": 0.80, "context_recall": 0.70},
+            "performance": {"avg_end_to_end_ms": 1500, "p95_end_to_end_ms": 3000},
+        }
+        report, passed = gate.evaluate_and_gate(current, save_on_pass=False)
+
+        # Faithfulness dropped 8% (relative fail), latency improved
+        assert len(report.trade_offs) > 0
+        assert not passed  # Relative drop > 5%
 
 
 # ---------------------------------------------------------------------------

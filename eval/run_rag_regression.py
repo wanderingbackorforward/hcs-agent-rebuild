@@ -86,6 +86,22 @@ def main():
         help="Max allowed latency increase as fraction (default: 0.20 = 20%).",
     )
     parser.add_argument(
+        "--faithfulness-min", type=float, default=0.7,
+        help="Absolute minimum Faithfulness (default: 0.7).",
+    )
+    parser.add_argument(
+        "--answer-relevance-min", type=float, default=0.7,
+        help="Absolute minimum Answer Relevance (default: 0.7).",
+    )
+    parser.add_argument(
+        "--context-precision-min", type=float, default=0.7,
+        help="Absolute minimum Context Precision (default: 0.7).",
+    )
+    parser.add_argument(
+        "--p95-latency-max", type=float, default=5000.0,
+        help="Absolute maximum P95 latency in ms (default: 5000).",
+    )
+    parser.add_argument(
         "--output", type=str, default="",
         help="Path to save the full report JSON (optional).",
     )
@@ -155,6 +171,14 @@ def main():
     gate = RegressionGate(
         thresholds=thresholds,
         latency_threshold=args.latency_increase,
+        absolute_min={
+            "faithfulness": args.faithfulness_min,
+            "answer_relevance": args.answer_relevance_min,
+            "context_precision": args.context_precision_min,
+        },
+        absolute_max_ms={
+            "p95_end_to_end_ms": args.p95_latency_max,
+        },
     )
 
     save_on_pass = args.save_on_pass and not args.no_save
