@@ -49,6 +49,8 @@ class KnowledgeDocument(Base):
     content = Column(Text, nullable=False)
     category = Column(String, nullable=False)  # sdk, manual, spec
     source = Column(String, nullable=True)
+    archive_path = Column(String, nullable=True)  # raw doc archive location
+    version = Column(Integer, default=1)  # bumped on each re-ingest
     metadata_json = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

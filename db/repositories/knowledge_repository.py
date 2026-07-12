@@ -13,6 +13,7 @@ class KnowledgeRepository:
 
     def add(self, doc_id: str, content: str, category: str,
             title: str = None, source: str = None,
+            archive_path: str = None, version: int = 1,
             metadata_json: dict = None) -> KnowledgeDocument:
         with self._session() as session:
             doc = session.query(KnowledgeDocument).filter(
@@ -23,6 +24,8 @@ class KnowledgeRepository:
                 doc.category = category
                 doc.title = title
                 doc.source = source
+                doc.archive_path = archive_path
+                doc.version = (doc.version or 0) + 1
                 doc.metadata_json = metadata_json or {}
                 doc.is_active = 1
             else:
@@ -32,6 +35,8 @@ class KnowledgeRepository:
                     content=content,
                     category=category,
                     source=source,
+                    archive_path=archive_path,
+                    version=version,
                     metadata_json=metadata_json or {},
                 )
                 session.add(doc)
@@ -61,3 +66,21 @@ class KnowledgeRepository:
                 KnowledgeDocument.is_active == 1
             ).distinct().all()
             return [r[0] for r in rows]
+
+    def delete(self, doc_id: str):
+        """Hard-delete a knowledge document by doc_id."""
+        with self._session() as session:
+            session.query(KnowledgeDocument).filter(
+                KnowledgeDocument.doc_id == doc_id
+            ).delete()
+            session.commit()
+
+    def deactivate(self, doc_id: str):
+        """Soft-delete: mark as inactive instead of removing the row."""
+        with self._session() as session:
+            doc = session.query(KnowledgeDocument).filter(
+                KnowledgeDocument.doc_id == doc_id
+            ).first()
+            if doc:
+                doc.is_active = 0
+                session.commit()

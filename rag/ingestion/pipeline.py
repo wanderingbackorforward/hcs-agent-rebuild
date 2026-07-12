@@ -3,10 +3,13 @@ import hashlib
 import logging
 import os
 from typing import List, Optional
+
 from rag.ingestion.chunking.chunker import TextChunker
 from rag.ingestion.chunking.quality_guard import ChunkQualityGuard
 from rag.ingestion.embedding.embedder import Embedder
 from rag.ingestion.storage.chroma_store import ChromaStore
+from rag.ingestion.storage.raw_doc_archive import RawDocArchive
+from rag.ingestion.storage.fts_store import FTS5Store
 from config.chunker_factory import create_chunker, create_quality_guard
 from config.vector_store_factory import create_vector_store
 
@@ -19,27 +22,48 @@ def _content_hash(content: str) -> str:
 
 class IngestionPipeline:
     def __init__(self, store: ChromaStore = None, chunker: TextChunker = None,
-                 embedder: Embedder = None, guard: Optional[ChunkQualityGuard] = None):
+                 embedder: Embedder = None, guard: Optional[ChunkQualityGuard] = None,
+                 archive: RawDocArchive = None, fts_store: FTS5Store = None,
+                 knowledge_repo=None):
         self.store = store or create_vector_store()
         self.chunker = chunker or create_chunker()
         self.embedder = embedder or Embedder()
         self.guard = guard if guard is not None else create_quality_guard()
+        self.archive = archive or RawDocArchive()
+        self.fts_store = fts_store or FTS5Store()
+        self.knowledge_repo = knowledge_repo  # Optional: SQLite metadata sync
 
     def ingest_text(self, content: str, doc_id: str = None, category: str = "spec",
-                    title: str = None, source: str = None) -> str:
-        # Idempotency: same content always produces same doc_id; skip if already in store.
+                    title: str = None, source: str = None,
+                    force: bool = False) -> str:
         effective_id = doc_id or _content_hash(content)
-        if effective_id in self.store.list_documents():
+
+        # 1. Archive raw content (always — overwrites if exists)
+        archive_path = self.archive.archive(
+            effective_id, content, category, title, source
+        )
+
+        # 2. Idempotency: skip if already ingested (unless force)
+        if not force and effective_id in self.store.list_documents():
             logger.info(f"ingest_text: skip duplicate doc_id={effective_id}")
+            self._sync_metadata(effective_id, content, category, title, source, archive_path)
             return effective_id
+
+        # 3. Delete old chunks if re-ingesting (force=True)
+        if force:
+            self.store.delete_by_doc_id(effective_id)
+            self.fts_store.delete_by_doc_id(effective_id)
+
+        # 4. Chunk
         chunks = self.chunker.split(content)
         # Rule-based pre-filter: only suspicious chunks pay an embedding cost
-        # for re-splitting; clean chunks pass straight through (zero embedding).
         chunks, assessments = self.guard.process(chunks, self.embedder)
         if self.guard.enabled and any(a.suspicious for a in assessments):
             flagged = sum(1 for a in assessments if a.suspicious)
             logger.info("ingest_text: guard flagged %d/%d chunks, %d segments after re-split",
                         flagged, len(assessments), len(chunks))
+
+        # 5. Embed
         embeddings = self.embedder.embed_batch(chunks)
         metadatas = [
             {
@@ -50,8 +74,38 @@ class IngestionPipeline:
             }
             for i in range(len(chunks))
         ]
-        self.store.upsert(effective_id, chunks, embeddings, metadatas)
+
+        # 6. Upsert to Chroma (returns generated chunk IDs)
+        chunk_ids = self.store.upsert(effective_id, chunks, embeddings, metadatas)
+
+        # 7. Insert into FTS5 index
+        self.fts_store.upsert_chunks(chunk_ids, effective_id, chunks, metadatas)
+
+        # 8. Sync metadata to SQLite
+        self._sync_metadata(effective_id, content, category, title, source, archive_path)
+
         return effective_id
+
+    def _sync_metadata(self, doc_id: str, content: str, category: str,
+                       title: str, source: str, archive_path: str):
+        """Sync document metadata to SQLite knowledge_documents table.
+
+        This table serves MCP tools (list_collections, get_document_summary)
+        and is NOT part of the RAG retrieval path.
+        """
+        if self.knowledge_repo is None:
+            return
+        try:
+            self.knowledge_repo.add(
+                doc_id=doc_id,
+                content=content[:1000],
+                category=category,
+                title=title,
+                source=source,
+                archive_path=archive_path,
+            )
+        except Exception as e:
+            logger.warning(f"SQLite metadata sync failed for {doc_id}: {e}")
 
     def ingest_file(self, file_path: str, doc_id: str = None,
                     category: str = "spec", title: str = None) -> str:
@@ -64,6 +118,17 @@ class IngestionPipeline:
             title or os.path.basename(file_path),
             source=file_path,
         )
+
+    def delete_document(self, doc_id: str):
+        """Delete a document from all stores: Chroma, FTS5, archive, SQLite."""
+        self.store.delete_by_doc_id(doc_id)
+        self.fts_store.delete_by_doc_id(doc_id)
+        self.archive.delete(doc_id)
+        if self.knowledge_repo is not None:
+            try:
+                self.knowledge_repo.delete(doc_id)
+            except Exception as e:
+                logger.warning(f"SQLite delete failed for {doc_id}: {e}")
 
     def seed_defaults(self):
         defaults = [

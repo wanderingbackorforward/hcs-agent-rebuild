@@ -24,9 +24,10 @@ class ChromaStore:
         )
 
     def upsert(self, doc_id: str, chunks: List[str], embeddings: List[List[float]],
-               metadatas: List[Dict] = None):
+               metadatas: List[Dict] = None) -> List[str]:
+        """Upsert chunks and return the generated chunk IDs."""
         if not chunks:
-            return
+            return []
         ids = [f"{doc_id}_{uuid.uuid4().hex[:8]}" for _ in chunks]
         metadatas = metadatas or [{} for _ in chunks]
         for i, m in enumerate(metadatas):
@@ -37,6 +38,7 @@ class ChromaStore:
             embeddings=embeddings,
             metadatas=metadatas,
         )
+        return ids
 
     def query(self, query_embedding: List[float], top_k: int = None,
               filters: Dict = None) -> List[Tuple[str, str, float, Dict]]:
@@ -76,6 +78,29 @@ class ChromaStore:
         )
         docs = results.get("documents", [])
         return "\n".join(docs) if docs else None
+
+    def delete_by_doc_id(self, doc_id: str):
+        """Delete all chunks belonging to a doc_id."""
+        self.collection.delete(where={"doc_id": doc_id})
+
+    def get_chunks_by_doc_id(self, doc_id: str) -> List[Tuple[str, str, Dict]]:
+        """Retrieve all (chunk_id, text, metadata) for a doc_id."""
+        results = self.collection.get(
+            where={"doc_id": doc_id},
+            include=["documents", "metadatas"],
+        )
+        ids = results.get("ids", [])
+        docs = results.get("documents", [])
+        metas = results.get("metadatas", [])
+        return list(zip(ids, docs, metas))
+
+    def get_all_chunks(self) -> List[Tuple[str, str, Dict]]:
+        """Retrieve all chunks — used for FTS5 initial migration."""
+        results = self.collection.get(include=["documents", "metadatas"])
+        ids = results.get("ids", [])
+        docs = results.get("documents", [])
+        metas = results.get("metadatas", [])
+        return list(zip(ids, docs, metas))
 
     def update_metadata(self, ids: List[str], metadata_update: Dict):
         """Update metadata for existing documents by ID."""

@@ -79,6 +79,9 @@ class AppSettings:
     chroma_distance: str = _env_str("CHROMA_DISTANCE", "cosine")
     knowledge_collection: str = _env_str("KNOWLEDGE_COLLECTION", "hcs_knowledge")
 
+    # ---- Raw document archive (Tier 2: trustworthy source for index rebuild) ----
+    raw_doc_archive_dir: str = _env_str("RAW_DOC_ARCHIVE_DIR", "./data/raw_docs")
+
     # ---- Retrieval ----
     retrieval_top_k: int = _env_int("RETRIEVAL_TOP_K", 5)
     memory_top_k: int = _env_int("MEMORY_TOP_K", 3)
@@ -119,6 +122,7 @@ class AppSettings:
     tool_cache_ttl: int = _env_int("TOOL_CACHE_TTL", 600)
     semantic_cache_ttl: int = _env_int("SEMANTIC_CACHE_TTL", 900)
     semantic_cache_threshold: float = _env_float("SEMANTIC_CACHE_THRESHOLD", 0.92)
+    semantic_cache_max_entries: int = _env_int("SEMANTIC_CACHE_MAX_ENTRIES", 5000)
 
     # ---- Thresholds ----
     classification_confidence_threshold: float = _env_float(

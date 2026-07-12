@@ -12,7 +12,7 @@ class HybridSearch:
                  dense_weight: float = 1.0, sparse_weight: float = 1.0,
                  reranker: Reranker = None):
         self.dense = dense or DenseRetriever()
-        self.sparse = sparse or SparseRetriever(self.dense.store)
+        self.sparse = sparse or SparseRetriever()
         self.dense_weight = dense_weight
         self.sparse_weight = sparse_weight
         self.reranker = reranker if reranker is not None else create_reranker()
