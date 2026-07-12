@@ -1,0 +1,279 @@
+{
+  "timestamp": "2026-07-12T11:44:03",
+  "git_commit": "92289d8",
+  "mode": "mock",
+  "case_count": 15,
+  "success_count": 15,
+  "fail_count": 0,
+  "ragas": {
+    "faithfulness": 0.0,
+    "answer_relevance": 0.0,
+    "context_precision": 0.0,
+    "context_recall": 0.0,
+    "average": 0.0
+  },
+  "performance": {
+    "avg_retrieval_ms": 120.5,
+    "avg_rerank_ms": 45.3,
+    "avg_generation_ms": 850.0,
+    "avg_end_to_end_ms": 1015.8,
+    "p95_end_to_end_ms": 1015.8
+  },
+  "per_case": [
+    {
+      "case_id": "rag-01",
+      "query": "HCS 是什么？",
+      "category": "factual_qa",
+      "answer": "HCS 是混合云解决方案，用于测试环境管理。",
+      "reference_answer": "HCS 是混合云解决方案，用于测试环境管理。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-02",
+      "query": "SDK 怎么初始化客户端？",
+      "category": "factual_qa",
+      "answer": "使用 SDK 的 init 方法初始化客户端，需传入配置参数。",
+      "reference_answer": "使用 SDK 的 init 方法初始化客户端，需传入配置参数。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-03",
+      "query": "测试规范对环境隔离有什么要求？",
+      "category": "factual_qa",
+      "answer": "测试环境要求网络与数据隔离，避免互相影响。",
+      "reference_answer": "测试环境要求网络与数据隔离，避免互相影响。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-04",
+      "query": "HCS 平台支持哪些组件，HBase 环境需要什么配置？",
+      "category": "multi_hop",
+      "answer": "HCS 支持多种大数据组件，HBase 环境需要配置 HDFS 和 Zookeeper。",
+      "reference_answer": "HCS 支持多种大数据组件，HBase 环境需要配置 HDFS 和 Zookeeper。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-05",
+      "query": "SDK 初始化后怎么创建测试环境并部署应用？",
+      "category": "multi_hop",
+      "answer": "SDK 初始化后通过 create_environment 方法创建环境，再用 deploy 方法部署应用。",
+      "reference_answer": "SDK 初始化后通过 create_environment 方法创建环境，再用 deploy 方法部署应用。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-06",
+      "query": "HCS 支持量子计算吗？",
+      "category": "no_result",
+      "answer": "知识库中没有关于量子计算的相关信息。",
+      "reference_answer": "知识库中没有关于量子计算的相关信息。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-07",
+      "query": "今天股市行情怎么样？",
+      "category": "out_of_scope",
+      "answer": "抱歉，我只能协助 HCS 测试相关的问题。",
+      "reference_answer": "抱歉，我只能协助 HCS 测试相关的问题。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-08",
+      "query": "有哪些知识库文档可以查？",
+      "category": "discovery",
+      "answer": "知识库包含 SDK 文档、测试规范、环境配置指南等分类。",
+      "reference_answer": "知识库包含 SDK 文档、测试规范、环境配置指南等分类。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-09",
+      "query": "hcs-sdk-quickstart 这篇文档讲了什么？",
+      "category": "doc_summary",
+      "answer": "HCS SDK 快速入门文档介绍了 SDK 的安装、初始化和基本使用方法。",
+      "reference_answer": "HCS SDK 快速入门文档介绍了 SDK 的安装、初始化和基本使用方法。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-10",
+      "query": "给我总结一下测试规范文档的要点",
+      "category": "doc_summary",
+      "answer": "测试规范要求环境隔离、数据隔离，并有明确的测试流程和质量标准。",
+      "reference_answer": "测试规范要求环境隔离、数据隔离，并有明确的测试流程和质量标准。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-11",
+      "query": "怎么部署",
+      "category": "ambiguous",
+      "answer": "部署应用需要先创建测试环境，然后通过 SDK 或平台界面进行部署。",
+      "reference_answer": "部署应用需要先创建测试环境，然后通过 SDK 或平台界面进行部署。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-12",
+      "query": "环境配置相关的文档在哪",
+      "category": "ambiguous",
+      "answer": "环境配置相关文档可以在知识库的环境配置分类中找到。",
+      "reference_answer": "环境配置相关文档可以在知识库的环境配置分类中找到。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-13",
+      "query": "HDFS 配置参数 dfs.replication 默认值是多少？",
+      "category": "keyword_lookup",
+      "answer": "dfs.replication 默认值通常为 3。",
+      "reference_answer": "dfs.replication 默认值通常为 3。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-14",
+      "query": "Zookeeper 的 clientPort 配置项是什么？",
+      "category": "keyword_lookup",
+      "answer": "Zookeeper 的 clientPort 是客户端连接端口，默认值为 2181。",
+      "reference_answer": "Zookeeper 的 clientPort 是客户端连接端口，默认值为 2181。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    },
+    {
+      "case_id": "rag-15",
+      "query": "How to use SDK to create a Linux 测试环境？",
+      "category": "mixed_lang",
+      "answer": "使用 SDK 的 create_environment 方法可以创建 Linux 测试环境。",
+      "reference_answer": "使用 SDK 的 create_environment 方法可以创建 Linux 测试环境。",
+      "retrieved_chunk_count": 2,
+      "stage_timings": {
+        "retrieval": 120.5,
+        "rerank": 45.3,
+        "generation": 850.0
+      },
+      "end_to_end_ms": 1015.8,
+      "success": true,
+      "error": "",
+      "ragas": {}
+    }
+  ]
+}
