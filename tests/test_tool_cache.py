@@ -1,13 +1,20 @@
-"""Tests for ToolCache, the tool-cache registry, SparseRetriever refresh-skip,
+"""Tests for ToolCache, the tool-cache registry, SparseRetriever (FTS5),
 and HybridSearch result caching.
 
-All tests use fakes — no real ChromaDB or embedding service needed.
+ToolCache and HybridSearch tests use fakes — no real ChromaDB or embedding
+service needed. SparseRetriever tests use a real FTS5Store with a temp SQLite
+database to verify FTS5 full-text search behavior.
 """
+import os
+import tempfile
+
 import pytest
+from sqlalchemy import create_engine
 
 from cache.tool_cache import ToolCache
 from rag.query_engine.hybrid_search import HybridSearch
 from rag.query_engine.sparse_retriever import SparseRetriever
+from rag.ingestion.storage.fts_store import FTS5Store
 import cache.registry as registry
 
 
@@ -81,33 +88,72 @@ def test_registry_invalidate_tool_cache():
     assert registry.get_tool_cache() is cache
 
 
-# --- fakes for SparseRetriever / HybridSearch ---
+# --- FTS5-based SparseRetriever tests ---
 
-class _FakeCollection:
-    """Mimics chromadb Collection.get/count without a real DB."""
+@pytest.fixture
+def fts_retriever():
+    """Create a SparseRetriever with a real FTS5Store in a temp SQLite DB."""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    engine = create_engine(f"sqlite:///{path}")
+    fts_store = FTS5Store(engine=engine)
 
-    def __init__(self, docs, metas, ids):
-        self._docs = list(docs)
-        self._metas = list(metas)
-        self._ids = list(ids)
-        self.get_calls = 0
+    # Insert test chunks with Chinese + English mixed content
+    fts_store.insert_chunk("c1", "doc1", "HCS SDK 安装配置指南", "sdk", "SDK文档", "seed")
+    fts_store.insert_chunk("c2", "doc1", "Python 版本要求 3.9 以上", "sdk", "SDK文档", "seed")
+    fts_store.insert_chunk("c3", "doc2", "MySQL Redis Kafka 环境要求", "spec", "测试规范", "seed")
+    fts_store.insert_chunk("c4", "doc2", "组件 available 状态检查", "spec", "测试规范", "seed")
+    fts_store.insert_chunk("c5", "doc3", "部署阶段 准备 安装 验收", "manual", "部署手册", "seed")
 
-    def get(self, include=None):
-        self.get_calls += 1
-        return {
-            "documents": list(self._docs),
-            "metadatas": list(self._metas),
-            "ids": list(self._ids),
-        }
+    yield SparseRetriever(fts_store=fts_store)
 
-    def count(self):
-        return len(self._docs)
+    engine.dispose()
+    os.unlink(path)
 
 
-class _FakeStore:
-    def __init__(self, collection):
-        self.collection = collection
+def test_sparse_retrieve_returns_relevant_results(fts_retriever):
+    """FTS5 search returns relevant chunks for keyword queries."""
+    results = fts_retriever.retrieve("SDK 安装", top_k=3)
+    assert len(results) > 0
+    doc_ids = {meta.get("doc_id") for _, _, _, meta in results}
+    assert "doc1" in doc_ids
 
+
+def test_sparse_retrieve_respects_top_k(fts_retriever):
+    results = fts_retriever.retrieve("环境", top_k=2)
+    assert len(results) <= 2
+
+
+def test_sparse_retrieve_with_category_filter(fts_retriever):
+    results = fts_retriever.retrieve("环境", top_k=5, filters={"category": "spec"})
+    assert len(results) > 0
+    for _, _, _, meta in results:
+        assert meta.get("category") == "spec"
+
+
+def test_sparse_refresh_is_noop(fts_retriever):
+    """refresh() is a no-op for FTS5 — index is always up-to-date."""
+    fts_retriever.refresh()  # should not raise
+    results = fts_retriever.retrieve("SDK", top_k=1)
+    assert len(results) > 0
+
+
+def test_sparse_retrieve_empty_query_returns_empty(fts_retriever):
+    results = fts_retriever.retrieve("   ", top_k=5)
+    assert results == []
+
+
+def test_sparse_retrieve_returns_text_and_score(fts_retriever):
+    """Results must include chunk text and a numeric score."""
+    results = fts_retriever.retrieve("Python", top_k=1)
+    assert len(results) > 0
+    chunk_id, text, score, meta = results[0]
+    assert isinstance(text, str) and len(text) > 0
+    assert isinstance(score, float)
+    assert "doc_id" in meta
+
+
+# --- fakes for HybridSearch result caching ---
 
 class _FakeSparse:
     def __init__(self):
@@ -134,38 +180,6 @@ class _FakeDense:
 class _FakeReranker:
     def rerank(self, query, results, top_k=5):
         return results[:top_k]
-
-
-# --- SparseRetriever refresh-skip ---
-
-def test_sparse_refresh_skips_when_count_unchanged():
-    col = _FakeCollection(["doc one two"], [{"doc_id": "d1"}], ["id1"])
-    sparse = SparseRetriever(store=_FakeStore(col))
-    assert col.get_calls == 1  # initial _build_index
-
-    sparse.refresh()  # count unchanged -> must skip rebuild
-    assert col.get_calls == 1, "refresh must not rebuild when count is unchanged"
-
-
-def test_sparse_refresh_rebuilds_when_count_changes():
-    col = _FakeCollection(["doc one"], [{"doc_id": "d1"}], ["id1"])
-    sparse = SparseRetriever(store=_FakeStore(col))
-    assert col.get_calls == 1
-
-    col._docs.append("new doc")  # simulate ingest -> count changes
-    sparse.refresh()
-    assert col.get_calls == 2, "refresh must rebuild when count changed"
-
-
-def test_sparse_retrieve_uses_cached_ids():
-    """retrieve() must NOT hit collection.get — it should use self._ids."""
-    col = _FakeCollection(["hello world"], [{"doc_id": "d1"}], ["chunk_abc"])
-    sparse = SparseRetriever(store=_FakeStore(col))
-    get_calls_after_build = col.get_calls
-
-    results = sparse.retrieve("hello", top_k=1)
-    assert col.get_calls == get_calls_after_build, "retrieve must not call collection.get"
-    assert results[0][0] == "chunk_abc"  # cached id used, not a fallback
 
 
 # --- HybridSearch result caching ---

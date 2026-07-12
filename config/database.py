@@ -1,5 +1,8 @@
 """Database and Redis configuration module."""
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseConfig:
@@ -38,3 +41,43 @@ class RedisConfig:
 
 db_config = DatabaseConfig()
 redis_config = RedisConfig()
+
+
+# Module-level singleton for the Redis client.
+_redis_client = None
+
+
+def get_redis_client():
+    """Return a cached sync Redis client, or None if Redis is not configured.
+
+    Returns None when:
+    - REDIS_URL is not set (redis_config.enabled is False)
+    - The redis package is not installed
+    - Client creation raises an error
+
+    The client is created once and cached as a module-level singleton.
+    Uses decode_responses=True so all string operations return Python str.
+    Connection is lazy — actual connectivity is tested on first command,
+    and RedisToolCache/RedisSemanticCache handle RedisError per operation.
+    """
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    if not redis_config.enabled:
+        return None
+    try:
+        import redis
+        _redis_client = redis.Redis.from_url(
+            redis_config.url,
+            decode_responses=True,
+        )
+        logger.info("Redis client created for url: %s", redis_config.url)
+    except ImportError:
+        logger.warning(
+            "redis package not installed; cache falls back to in-memory"
+        )
+        return None
+    except Exception as e:
+        logger.warning("Redis client init failed: %s", e)
+        return None
+    return _redis_client
