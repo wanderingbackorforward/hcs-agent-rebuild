@@ -25,6 +25,8 @@ load_dotenv()
 
 CHAT_PROVIDERS = {"openai", "qwen", "deepseek", "zhipu", "minimax", "openai-compatible"}
 EMBEDDING_PROVIDERS = {"openai", "qwen", "deepseek", "zhipu", "minimax", "openai-compatible"}
+# local provider 支持内网私有化部署的 BGE / GTE 等模型，通过 sentence-transformers 本地推理
+LOCAL_EMBEDDING_PROVIDERS = {"local"}
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -73,6 +75,62 @@ class MiniMaxEmbeddings(BaseModel, Embeddings):
 
     def embed_query(self, text: str) -> List[float]:
         return self._embed([text], "query")[0]
+
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.embed_documents, texts)
+
+    async def aembed_query(self, text: str) -> List[float]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.embed_query, text)
+
+
+class LocalEmbeddings(BaseModel, Embeddings):
+    """Local embedding model client for on-premise deployment.
+
+    Supports BGE / GTE / m3e 等通过 sentence-transformers 加载的本地模型，
+    适用于内网私有化部署场景（API 不可达或数据不出网）。
+
+    模型通过 ``EMBEDDING_MODEL`` 指定，可以是 HuggingFace Hub 模型名
+    （如 ``BAAI/bge-large-zh-v1.5``、``BAAI/bge-m3``）或本地路径。
+
+    依赖 ``sentence-transformers`` 和 ``langchain-huggingface`` 包，
+    未安装时在调用阶段抛出可读的安装指引，不影响其他 provider 的导入。
+    """
+
+    model: str = "BAAI/bge-large-zh-v1.5"
+    device: str = "cpu"
+    normalize_embeddings: bool = True
+    _backend: Any = None
+
+    def _get_backend(self):
+        if self._backend is not None:
+            return self._backend
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings as _Backend
+        except ImportError:
+            try:
+                from langchain_community.embeddings import (
+                    HuggingFaceEmbeddings as _Backend,
+                )
+            except ImportError:
+                raise ImportError(
+                    "Local embedding provider requires 'sentence-transformers' "
+                    "and 'langchain-huggingface' (or 'langchain-community'). "
+                    "Install with: pip install sentence-transformers langchain-huggingface"
+                )
+        self._backend = _Backend(
+            model_name=self.model,
+            model_kwargs={"device": self.device},
+            encode_kwargs={"normalize_embeddings": self.normalize_embeddings},
+        )
+        return self._backend
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return self._get_backend().embed_documents(texts)
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._get_backend().embed_query(text)
 
     async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
         loop = asyncio.get_running_loop()
@@ -136,7 +194,14 @@ def create_embedding_model():
             check_embedding_ctx_length=False,
         )
 
+    if provider in LOCAL_EMBEDDING_PROVIDERS:
+        return LocalEmbeddings(
+            model=_env("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
+            or "BAAI/bge-large-zh-v1.5",
+            device=_env("EMBEDDING_DEVICE", "cpu") or "cpu",
+        )
+
     raise ValueError(
         f"Unsupported EMBEDDING_PROVIDER={provider!r}. "
-        "Use azure, qwen, deepseek, zhipu, minimax, openai, or openai-compatible."
+        "Use azure, qwen, deepseek, zhipu, minimax, local, openai, or openai-compatible."
     )

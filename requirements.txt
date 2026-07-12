@@ -21,3 +21,6 @@ sqlalchemy>=2.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 redis>=5.0.0
+# --- local embedding provider (可选，内网私有化部署 BGE 等模型时安装) ---
+sentence-transformers>=2.7.0
+langchain-huggingface>=0.1.0
