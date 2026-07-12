@@ -70,6 +70,10 @@ class AgentTrace:
     retrieved_context: str = ""
     # Free-form metadata (intent, agent_name, labels, ...).
     meta: Dict[str, Any] = field(default_factory=dict)
+    # Per-stage latency in ms: {"retrieval": 120.5, "rerank": 45.3, "generation": 850.0}
+    stage_timings: Dict[str, float] = field(default_factory=dict)
+    # Retrieved chunks as structured list (for RAGAS context metrics).
+    retrieved_chunks: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def latency_ms(self) -> float:
@@ -103,6 +107,8 @@ class AgentTrace:
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
             "step_count": self.step_count,
+            "stage_timings": self.stage_timings,
+            "retrieved_chunks": self.retrieved_chunks,
             "steps": [
                 {
                     "step": s.step, "thought": s.thought, "action": s.action,
@@ -176,3 +182,42 @@ class TraceRecorder:
         done = self._current
         self._current = None
         return done
+
+    def set_stage_timing(self, stage: str, ms: float) -> None:
+        """Record per-stage latency on the current trace.
+
+        Stages: "retrieval", "rerank", "generation", "tool_call", "list_collections".
+        """
+        if self._current is not None:
+            self._current.stage_timings[stage] = round(ms, 1)
+
+    def set_retrieved_chunks(self, chunks: List[Dict[str, Any]]) -> None:
+        """Store structured retrieved chunks for RAGAS context metrics."""
+        if self._current is not None:
+            self._current.retrieved_chunks = chunks
+
+
+class StageTimer:
+    """Context manager for timing a RAG pipeline stage.
+
+    Usage::
+
+        with StageTimer(recorder, "retrieval"):
+            results = hybrid_search.search(query)
+    """
+
+    def __init__(self, recorder: Optional[TraceRecorder] = None, stage: str = ""):
+        self._recorder = recorder
+        self._stage = stage
+        self._start = 0.0
+        self.elapsed_ms = 0.0
+
+    def __enter__(self):
+        self._start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.elapsed_ms = (time.time() - self._start) * 1000.0
+        if self._recorder:
+            self._recorder.set_stage_timing(self._stage, self.elapsed_ms)
+        return False
